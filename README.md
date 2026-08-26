@@ -259,9 +259,24 @@ cd backend
 
 ### پیش‌نیاز
 
-- یک سرور لینوکسی با Docker و Docker Compose
+- یک سرور لینوکسی با Docker
+- **Docker Compose نسخه ۲** (یعنی `docker compose` با فاصله، نه `docker-compose`
+  با خط تیره). نسخه قدیمیِ جداگانه این فایل را نمی‌تواند بخواند و از سال ۲۰۲۳
+  دیگر پشتیبانی نمی‌شود.
 - یک دامنه که رکورد `A` آن به IP سرور اشاره کند
 - پورت‌های ۸۰ و ۴۴۳ باز
+
+بررسی نسخه Compose:
+
+```bash
+docker compose version
+```
+
+اگر خطای `unknown command: docker compose` گرفتید، افزونه نسخه ۲ نصب نیست:
+
+```bash
+make install-compose
+```
 
 ### مراحل
 

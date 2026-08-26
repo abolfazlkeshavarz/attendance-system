@@ -7,6 +7,12 @@ COMPOSE := docker compose
 BACKUP_DIR := backups
 STAMP := $(shell date +%Y%m%d-%H%M%S)
 
+# نسخه ۲ افزونه Compose لازم است. نسخه قدیمی و جداگانه «docker-compose» (که با
+# خط تیره صدا زده می‌شود) این فایل را اصلاً نمی‌تواند بخواند: کلید `name` در
+# ریشه فایل و `depends_on.condition` را پشتیبانی نمی‌کند. ضمناً از سال ۲۰۲۳
+# دیگر پشتیبانی نمی‌شود.
+COMPOSE_OK := $(shell docker compose version >/dev/null 2>&1 && echo yes)
+
 # نام سرویس‌ها
 DB := db
 BACKEND := backend
@@ -49,8 +55,42 @@ setup: ## ساخت فایل .env با کلیدهای تصادفی (بار اول
 	fi
 
 .PHONY: check-env
-check-env:
+check-env: check-compose
 	@test -f .env || { echo "فایل .env نیست. اول «make setup» را اجرا کنید."; exit 1; }
+
+.PHONY: check-compose
+check-compose:
+	@if [ "$(COMPOSE_OK)" != "yes" ]; then \
+		echo ""; \
+		echo "  ✗ افزونه Docker Compose نسخه ۲ روی این سرور نصب نیست."; \
+		echo ""; \
+		if command -v docker-compose >/dev/null 2>&1; then \
+			echo "    نسخه قدیمی «docker-compose» (با خط تیره) نصب است، ولی این"; \
+			echo "    فایل با آن کار نمی‌کند و آن نسخه هم دیگر پشتیبانی نمی‌شود."; \
+			echo ""; \
+		fi; \
+		echo "    برای نصب:  make install-compose"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+.PHONY: install-compose
+install-compose: ## نصب افزونه Docker Compose نسخه ۲
+	@set -e; \
+	arch=$$(uname -m); \
+	case "$$arch" in \
+		x86_64|amd64) target=x86_64 ;; \
+		aarch64|arm64) target=aarch64 ;; \
+		*) echo "معماری پشتیبانی‌نشده: $$arch"; exit 1 ;; \
+	esac; \
+	dest=/usr/local/lib/docker/cli-plugins; \
+	echo "نصب Docker Compose v2 برای $$target در $$dest"; \
+	mkdir -p $$dest; \
+	curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$$target" \
+		-o $$dest/docker-compose; \
+	chmod +x $$dest/docker-compose; \
+	echo ""; \
+	docker compose version
 
 # ------------------------------------------------------------- استقرار
 
@@ -71,11 +111,11 @@ up: check-env ## بالا آوردن سرویس‌ها
 	$(COMPOSE) up -d
 
 .PHONY: down
-down: ## خواباندن سرویس‌ها (داده‌ها پاک نمی‌شوند)
+down: check-compose ## خواباندن سرویس‌ها (داده‌ها پاک نمی‌شوند)
 	$(COMPOSE) down
 
 .PHONY: restart
-restart: ## راه‌اندازی مجدد سرویس‌ها
+restart: check-compose ## راه‌اندازی مجدد سرویس‌ها
 	$(COMPOSE) restart
 
 .PHONY: update
@@ -86,11 +126,11 @@ update: check-env ## دریافت آخرین کد، ساخت مجدد و راه�
 	@$(MAKE) --no-print-directory status
 
 .PHONY: status
-status: ## وضعیت سرویس‌ها
+status: check-compose ## وضعیت سرویس‌ها
 	@$(COMPOSE) ps
 
 .PHONY: logs
-logs: ## دنبال کردن لاگ همه سرویس‌ها (Ctrl+C برای خروج)
+logs: check-compose ## دنبال کردن لاگ همه سرویس‌ها (Ctrl+C برای خروج)
 	$(COMPOSE) logs -f --tail=100
 
 .PHONY: logs-backend
@@ -175,9 +215,12 @@ test: ## اجرای آزمون‌های سرور
 		|| cd backend && python -m pytest tests/ -q
 
 .PHONY: test-docker
-test-docker: ## اجرای آزمون‌ها داخل کانتینر
-	$(COMPOSE) run --rm -e DATABASE_URL=sqlite:////tmp/test.db $(BACKEND) \
-		python -m pytest tests/ -q
+test-docker: check-env ## اجرای آزمون‌ها داخل کانتینر
+	@# آزمون‌ها عمداً داخل ایمیج تولید نیستند؛ موقع اجرا mount می‌شوند
+	$(COMPOSE) run --rm --no-deps \
+		-e DATABASE_URL=sqlite:////tmp/test.db \
+		-v "$(CURDIR)/backend/tests:/app/tests:ro" \
+		$(BACKEND) python -m pytest tests/ -q
 
 .PHONY: clean
 clean: ## حذف کانتینرها و ایمیج‌ها (داده‌ها می‌مانند)
