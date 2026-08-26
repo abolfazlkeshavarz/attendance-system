@@ -20,6 +20,7 @@ from app.core.security import verify_password
 from app.models.employee import Employee
 from app.models.enums import PunchMethod
 from app.schemas.attendance import (
+    KioskHeartbeat,
     KioskIdentifyRequest,
     KioskIdentifyResponse,
     PunchBatch,
@@ -52,8 +53,25 @@ def handshake(device: CurrentDevice, db: DbSession) -> dict:
             "face_threshold": settings.FACE_MATCH_THRESHOLD,
             "min_seconds_between_punches": settings.MIN_SECONDS_BETWEEN_PUNCHES,
             "timezone": settings.TIMEZONE,
+            "require_liveness": settings.REQUIRE_LIVENESS,
+            "liveness_turn_threshold": settings.LIVENESS_TURN_THRESHOLD,
+            "liveness_timeout_seconds": settings.LIVENESS_TIMEOUT_SECONDS,
         },
     }
+
+
+@router.post("/heartbeat", summary="گزارش وضعیت تبلت به سرور")
+def heartbeat(payload: KioskHeartbeat, device: CurrentDevice, db: DbSession) -> dict:
+    """تبلت تعداد ترددهای ارسال‌نشده خودش را اعلام می‌کند.
+
+    بدون این، پنل مدیریت نمی‌فهمد یک تبلت چند روز است آفلاین مانده و چند تردد
+    روی آن معطل است.
+    """
+    device.pending_count = payload.pending_count
+    device.app_version = payload.app_version or device.app_version
+    device.last_seen_at = now_utc()
+    db.commit()
+    return {"ok": True, "server_time": now_utc().isoformat()}
 
 
 @router.get("/gallery", response_model=FaceGallery, summary="دریافت گالری چهره‌ها")
@@ -232,7 +250,8 @@ def sync(payload: PunchBatch, device: CurrentDevice, db: DbSession) -> PunchBatc
 
     device.last_sync_at = now_utc()
     device.app_version = payload.app_version or device.app_version
-    device.pending_count = 0
+    # تبلت در ضربان بعدی تعداد واقعی باقی‌مانده را اعلام می‌کند
+    device.pending_count = max(0, device.pending_count - created - duplicates)
     db.commit()
 
     return PunchBatchResult(

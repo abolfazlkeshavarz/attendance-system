@@ -1,7 +1,7 @@
 // frontend/src/components/JalaliDatePicker.tsx
 import React, { useState, useEffect, useRef } from 'react'
 import { Calendar } from 'lucide-react'
-import { toJalaliString, toPersianDigits } from '../lib/jalali'
+import { toPersianDigits } from '../lib/jalali'
 
 // کامپوننت ساده و مستقل - بدون وابستگی به کتابخانه‌های خارجی
 export function JalaliDatePicker({
@@ -47,16 +47,31 @@ export function JalaliDatePicker({
       .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
       .replace(/[^0-9/]/g, '')
     
-    // بررسی فرمت صحیح
-    if (normalized.match(/^\d{4}\/\d{2}\/\d{2}$/)) {
-      setIsValid(true)
-      onChange(normalized)
-    } else if (normalized === '') {
-      setIsValid(true)
+    if (normalized === '') {
+      // فیلد خالی درست است، ولی «متنی که هیچ رقمی ندارد» باید نامعتبر نشان داده شود
+      setIsValid(raw.trim() === '')
       onChange('')
-    } else {
-      setIsValid(false)
+      return
     }
+
+    // ماه و روز یک‌رقمی هم پذیرفته می‌شود: «۱۴۰۵/۶/۳» → «1405/06/03»
+    const parts = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+    if (!parts) {
+      setIsValid(false)
+      return
+    }
+
+    const [, year, month, day] = parts
+    const m = Number(month)
+    const d = Number(day)
+    // اسفند ۳۰ روز دارد و بقیه ماه‌ها حداکثر ۳۱ روز
+    if (m < 1 || m > 12 || d < 1 || d > 31 || (m === 12 && d > 30)) {
+      setIsValid(false)
+      return
+    }
+
+    setIsValid(true)
+    onChange(`${year}/${month.padStart(2, '0')}/${day.padStart(2, '0')}`)
   }
 
   // کلیک روی آیکون، فوکوس روی input

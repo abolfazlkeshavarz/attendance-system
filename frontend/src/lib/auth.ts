@@ -22,6 +22,8 @@ export const useAuth = create<AuthState>((set) => ({
   },
 
   logout() {
+    // کوکی دسترسی به تصاویر HttpOnly است و فقط سرور می‌تواند پاکش کند
+    void api.post('/auth/logout').catch(() => undefined)
     tokens.clear()
     set({ user: null, loading: false })
   },

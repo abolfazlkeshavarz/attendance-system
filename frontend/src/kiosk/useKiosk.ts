@@ -18,6 +18,51 @@ import {
   saveGallery,
 } from '../lib/offlineQueue'
 
+export const APP_VERSION = '1.0.0'
+
+export interface KioskSettings {
+  face_threshold: number
+  min_seconds_between_punches: number
+  require_liveness: boolean
+  liveness_turn_threshold: number
+  liveness_timeout_seconds: number
+}
+
+const FALLBACK_SETTINGS: KioskSettings = {
+  face_threshold: 0.6,
+  min_seconds_between_punches: 60,
+  require_liveness: true,
+  liveness_turn_threshold: 0.06,
+  liveness_timeout_seconds: 12,
+}
+
+/**
+ * تنظیمات را از سرور می‌گیرد و در حافظه محلی نگه می‌دارد.
+ *
+ * اگر تبلت آفلاین بالا بیاید، آخرین تنظیمات ذخیره‌شده استفاده می‌شود — نه مقادیر
+ * پیش‌فرض. مهم است که تشخیص زنده بودن با قطع اینترنت بی‌سروصدا خاموش نشود.
+ */
+export function useKioskSettings(enabled: boolean) {
+  const [settings, setSettings] = useState<KioskSettings>(() => {
+    const cached = localStorage.getItem('att.kioskSettings')
+    return cached ? { ...FALLBACK_SETTINGS, ...JSON.parse(cached) } : FALLBACK_SETTINGS
+  })
+
+  useEffect(() => {
+    if (!enabled) return
+    kioskApi
+      .get('/kiosk/handshake')
+      .then((res) => {
+        const fresh = { ...FALLBACK_SETTINGS, ...res.data.settings }
+        localStorage.setItem('att.kioskSettings', JSON.stringify(fresh))
+        setSettings(fresh)
+      })
+      .catch(() => undefined)
+  }, [enabled])
+
+  return settings
+}
+
 export type KioskPhase = 'setup' | 'booting' | 'scanning' | 'greeting' | 'error'
 
 export function toCandidates(items: GalleryItem[]): MatchCandidate[] {
@@ -178,7 +223,7 @@ export function useSyncQueue(online: boolean) {
     setState((s) => ({ ...s, syncing: true }))
     try {
       const res = await kioskApi.post('/kiosk/sync', {
-        app_version: '1.0.0',
+        app_version: APP_VERSION,
         records: items.map((item) => ({
           employee_id: item.employee_id,
           kind: item.kind,
@@ -220,6 +265,24 @@ export function useSyncQueue(online: boolean) {
     const timer = setInterval(() => void flush(), 120_000)
     return () => clearInterval(timer)
   }, [online, flush])
+
+  // اعلام وضعیت به سرور تا پنل مدیریت بداند چند تردد روی این تبلت معطل مانده
+  useEffect(() => {
+    if (!online) return
+    const beat = async () => {
+      try {
+        await kioskApi.post('/kiosk/heartbeat', {
+          pending_count: await queueSize(),
+          app_version: APP_VERSION,
+        })
+      } catch {
+        // آفلاین — ضربان بعدی دوباره تلاش می‌کند
+      }
+    }
+    void beat()
+    const timer = setInterval(() => void beat(), 120_000)
+    return () => clearInterval(timer)
+  }, [online, state.pending])
 
   return { ...state, flush, refreshCount }
 }

@@ -72,6 +72,18 @@ def create_refresh_token(user_id: int) -> str:
     )
 
 
+def create_media_token(user_id: int) -> str:
+    """توکن محدود برای دیدن تصاویر چهره و عکس ترددها.
+
+    تگ `<img>` نمی‌تواند هدر Authorization بفرستد، پس این توکن در یک کوکی
+    HttpOnly گذاشته می‌شود. عمداً از توکن اصلی جداست تا اگر لو رفت، فقط اجازه
+    دیدن تصویر بدهد و نه کار با API.
+    """
+    return _create_token(
+        str(user_id), timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES), "media"
+    )
+
+
 def decode_token(token: str) -> dict[str, Any] | None:
     try:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

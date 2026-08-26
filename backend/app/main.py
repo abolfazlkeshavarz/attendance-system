@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.jalali import fmt_time, jalali_long, now_utc, to_tehran
+from app.core.security import decode_token
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 
@@ -54,6 +55,40 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=str(settings.STATIC_DIR)), name="static")
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+
+@app.middleware("http")
+async def guard_media(request: Request, call_next):
+    """تصاویر چهره و عکس ترددها نباید عمومی باشند.
+
+    این‌ها داده شخصی پرسنل‌اند؛ بدون این نگهبان، هر کسی که به سرور دسترسی شبکه‌ای
+    دارد می‌تواند آن‌ها را بردارد. چون تگ `<img>` هدر Authorization نمی‌فرستد،
+    اجازه دسترسی از روی کوکی HttpOnly که هنگام ورود ست می‌شود بررسی می‌شود.
+    """
+    if request.url.path.startswith("/static/"):
+        if not _media_allowed(request):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "برای دیدن این تصویر باید وارد سامانه شوید"},
+            )
+    return await call_next(request)
+
+
+def _media_allowed(request: Request) -> bool:
+    cookie = request.cookies.get(settings.MEDIA_COOKIE_NAME)
+    if cookie:
+        payload = decode_token(cookie)
+        if payload and payload.get("type") == "media":
+            return True
+
+    # کلاینت‌های API (مثلاً اسکریپت‌ها) می‌توانند توکن معمولی بفرستند
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        payload = decode_token(auth_header.split(" ", 1)[1])
+        if payload and payload.get("type") in ("access", "media"):
+            return True
+
+    return False
 
 
 @app.exception_handler(RequestValidationError)
