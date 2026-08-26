@@ -18,6 +18,14 @@ DB := db
 BACKEND := backend
 WEB := web
 
+# آدرس آینه‌های داخلی Liara (برای دور زدن کندی/فیلترینگ روی سرورهای ایران)
+GO_PROXY := https://package-mirror.liara.ir/repository/go/
+NPM_REGISTRY := https://package-mirror.liara.ir/repository/npm/
+PYPI_INDEX := https://package-mirror.liara.ir/repository/pypi/
+APT_MIRROR := http://linux-mirror.liara.ir/repository/ubuntu/
+APT_SECURITY_MIRROR := http://linux-mirror.liara.ir/repository/ubuntu-security/
+DOCKER_MIRROR := https://docker-mirror.liara.ir
+
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------- راهنما
@@ -30,7 +38,7 @@ help: ## نمایش همین فهرست
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "  شروع سریع روی VPS:  make setup  →  ویرایش .env  →  make deploy  →  make ssl"
+	@echo "  شروع سریع روی VPS:  make setup  →  ویرایش .env  →  make mirrors  →  make deploy  →  make ssl"
 	@echo ""
 
 # ------------------------------------------------------------ راه‌اندازی
@@ -51,7 +59,7 @@ setup: ## ساخت فایل .env با کلیدهای تصادفی (بار اول
 		echo "فایل .env ساخته شد و کلیدها تصادفی تولید شدند."; \
 		echo "رمز اولیه مدیر: $$adminpass"; \
 		echo ""; \
-		echo "حالا DOMAIN و LETSENCRYPT_EMAIL را در .env تنظیم کنید، سپس: make deploy"; \
+		echo "حالا DOMAIN و LETSENCRYPT_EMAIL را در .env تنظیم کنید، سپس: make mirrors && make deploy"; \
 	fi
 
 .PHONY: check-env
@@ -91,6 +99,74 @@ install-compose: ## نصب افزونه Docker Compose نسخه ۲
 	chmod +x $$dest/docker-compose; \
 	echo ""; \
 	docker compose version
+
+# ------------------------------------------------------- آینه‌های داخلی
+
+.PHONY: mirrors
+mirrors: mirrors-go mirrors-npm mirrors-pip ## تنظیم آینه‌های go، npm و pip برای کاربر جاری
+	@echo ""
+	@echo "آینه‌های go، npm و pip تنظیم شدند."
+	@echo "برای آینه سیستم‌عامل (apt) و داکر که نیاز به دسترسی root دارند:"
+	@echo "    sudo make mirrors-apt"
+	@echo "    sudo make mirrors-docker"
+	@echo ""
+
+.PHONY: mirrors-go
+mirrors-go: ## تنظیم آینه ماژول‌های Go
+	@if ! command -v go >/dev/null 2>&1; then echo "go نصب نیست؛ رد شد."; exit 0; fi
+	go env -w GOPROXY=$(GO_PROXY)
+	go env -w GOSUMDB=off
+	@echo "آینه go تنظیم شد: $(GO_PROXY)"
+
+.PHONY: mirrors-npm
+mirrors-npm: ## تنظیم آینه npm (سراسری)
+	@if ! command -v npm >/dev/null 2>&1; then echo "npm نصب نیست؛ رد شد."; exit 0; fi
+	npm config set registry $(NPM_REGISTRY) --global
+	@echo "آینه npm تنظیم شد: $(NPM_REGISTRY)"
+
+.PHONY: mirrors-pip
+mirrors-pip: ## تنظیم آینه pip برای کاربر جاری
+	@mkdir -p "$$HOME/.pip" "$$HOME/.config/pip"
+	@printf '[global]\nindex-url = %s\n' "$(PYPI_INDEX)" > "$$HOME/.pip/pip.conf"
+	@printf '[global]\nindex-url = %s\n' "$(PYPI_INDEX)" > "$$HOME/.config/pip/pip.conf"
+	@echo "آینه pip تنظیم شد: $(PYPI_INDEX)"
+
+.PHONY: mirrors-apt
+mirrors-apt: ## تنظیم آینه apt (نیاز به sudo/root روی سرور)
+	@test "$$(id -u)" = "0" || { echo "این دستور باید با sudo اجرا شود: sudo make mirrors-apt"; exit 1; }
+	@if [ -f /etc/apt/sources.list ]; then \
+		cp -n /etc/apt/sources.list /etc/apt/sources.list.bak; \
+		sed -i \
+			-e 's|https\{0,1\}://[^ ]*archive\.ubuntu\.com/ubuntu/|$(APT_MIRROR)|g' \
+			-e 's|https\{0,1\}://[^ ]*security\.ubuntu\.com/ubuntu/|$(APT_SECURITY_MIRROR)|g' \
+			/etc/apt/sources.list; \
+	fi; \
+	if [ -d /etc/apt/sources.list.d ]; then \
+		for f in /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do \
+			[ -f "$$f" ] || continue; \
+			cp -n "$$f" "$$f.bak"; \
+			sed -i \
+				-e 's|https\{0,1\}://[^ ]*archive\.ubuntu\.com/ubuntu/|$(APT_MIRROR)|g' \
+				-e 's|https\{0,1\}://[^ ]*security\.ubuntu\.com/ubuntu/|$(APT_SECURITY_MIRROR)|g' \
+				"$$f"; \
+		done; \
+	fi
+	apt-get update
+	@echo "آینه apt تنظیم شد (نسخه‌های قبلی با پسوند .bak نگه داشته شدند)."
+
+.PHONY: mirrors-docker
+mirrors-docker: ## تنظیم آینه دریافت ایمیج داکر (نیاز به sudo/root)
+	@test "$$(id -u)" = "0" || { echo "این دستور باید با sudo اجرا شود: sudo make mirrors-docker"; exit 1; }
+	@mkdir -p /etc/docker
+	@if [ -f /etc/docker/daemon.json ]; then cp -n /etc/docker/daemon.json /etc/docker/daemon.json.bak; fi
+	@if command -v jq >/dev/null 2>&1 && [ -s /etc/docker/daemon.json ]; then \
+		jq '.["registry-mirrors"] = ["$(DOCKER_MIRROR)"]' /etc/docker/daemon.json > /tmp/daemon.json.tmp && \
+		mv /tmp/daemon.json.tmp /etc/docker/daemon.json; \
+	else \
+		printf '{\n  "registry-mirrors": ["%s"]\n}\n' "$(DOCKER_MIRROR)" > /etc/docker/daemon.json; \
+	fi
+	@systemctl restart docker
+	@echo "آینه docker تنظیم شد و سرویس docker ری‌استارت شد: $(DOCKER_MIRROR)"
 
 # ------------------------------------------------------------- استقرار
 
