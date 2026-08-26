@@ -81,7 +81,7 @@ def _autofilter(ws: Worksheet, columns: int, last_row: int) -> None:
 SUMMARY_COLUMNS = [
     "ردیف", "کد پرسنلی", "نام و نام خانوادگی", "واحد", "سمت",
     "روز حاضر", "روز غایب", "مرخصی", "مأموریت", "ناقص",
-    "تعطیل رسمی", "تعطیل هفتگی", "کارکرد", "موظفی",
+    "تعطیل رسمی", "تعطیل هفتگی", "مرخصی ساعتی", "کارکرد", "موظفی",
     "تأخیر (دقیقه)", "دفعات تأخیر", "تعجیل (دقیقه)", "اضافه‌کاری", "درصد حضور",
 ]
 
@@ -122,6 +122,7 @@ def build_period_workbook(
                 ps.incomplete_days,
                 ps.holiday_days,
                 ps.weekend_days,
+                _hhmm(ps.hourly_leave_minutes),
                 _hhmm(ps.worked_minutes),
                 _hhmm(ps.expected_minutes),
                 ps.late_minutes,
@@ -145,18 +146,18 @@ def build_period_workbook(
         8: sum(s.leave_days for s in summaries),
         9: sum(s.mission_days for s in summaries),
         10: sum(s.incomplete_days for s in summaries),
-        15: sum(s.late_minutes for s in summaries),
-        16: sum(s.late_count for s in summaries),
-        17: sum(s.early_leave_minutes for s in summaries),
+        16: sum(s.late_minutes for s in summaries),
+        17: sum(s.late_count for s in summaries),
+        18: sum(s.early_leave_minutes for s in summaries),
     }
     for col, value in totals.items():
         c = ws.cell(row=total_row, column=col, value=value)
         c.font = HEADER_FONT
         c.fill = HEADER_FILL
         c.alignment = CENTER
-    c = ws.cell(row=total_row, column=13, value=_hhmm(sum(s.worked_minutes for s in summaries)))
+    c = ws.cell(row=total_row, column=14, value=_hhmm(sum(s.worked_minutes for s in summaries)))
     c.font, c.fill, c.alignment = HEADER_FONT, HEADER_FILL, CENTER
-    c = ws.cell(row=total_row, column=18, value=_hhmm(sum(s.overtime_minutes for s in summaries)))
+    c = ws.cell(row=total_row, column=19, value=_hhmm(sum(s.overtime_minutes for s in summaries)))
     c.font, c.fill, c.alignment = HEADER_FONT, HEADER_FILL, CENTER
 
     if include_details:

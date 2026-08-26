@@ -9,6 +9,7 @@ import {
   LogIn,
   LogOut,
   RefreshCw,
+  RotateCw,
   ScanFace,
   Settings2,
   Users,
@@ -24,12 +25,14 @@ import {
   findBestMatch,
   type MatchResult,
 } from '../lib/faceEngine'
+import { LivenessChallenge } from '../lib/liveness'
 import {
   hasDeviceKey,
   submitPunch,
   useCamera,
   useFaceModels,
   useGallery,
+  useKioskSettings,
   useOnline,
   useSyncQueue,
 } from './useKiosk'
@@ -54,12 +57,32 @@ export default function Kiosk() {
   const { gallery, candidates, savedAt, syncing, refresh } = useGallery(paired)
   const threshold = gallery?.threshold ?? DEFAULT_THRESHOLD
   const models = useFaceModels(paired)
+  const kioskSettings = useKioskSettings(paired)
+  const livenessRequired = kioskSettings.require_liveness
   const { videoRef, error: cameraError, running } = useCamera(paired)
 
   const [greeting, setGreeting] = useState<Greeting | null>(null)
   const [hint, setHint] = useState('صورتتان را مقابل دوربین قرار دهید')
+  const [liveness, setLiveness] = useState({ active: false, progress: 0, prompt: '' })
   const busyRef = useRef(false)
   const cooldownRef = useRef<Record<number, number>>({})
+
+  // چالش زنده بودن، مخصوص همان فردی که الان شناسایی شده است
+  const challengeRef = useRef(new LivenessChallenge())
+  useEffect(() => {
+    challengeRef.current = new LivenessChallenge({
+      turnThreshold: kioskSettings.liveness_turn_threshold,
+      timeoutMs: kioskSettings.liveness_timeout_seconds * 1000,
+    })
+  }, [kioskSettings.liveness_turn_threshold, kioskSettings.liveness_timeout_seconds])
+  const challengeForRef = useRef<number | null>(null)
+  const missingFramesRef = useRef(0)
+
+  const resetChallenge = useCallback(() => {
+    challengeRef.current.reset()
+    challengeForRef.current = null
+    setLiveness({ active: false, progress: 0, prompt: '' })
+  }, [])
 
   const clock = useClock()
 
@@ -71,9 +94,18 @@ export default function Kiosk() {
 
     busyRef.current = true
     try {
-      const face = await faceEngine.detect(video)
+      const { face, count } = await faceEngine.detectPrimary(video)
       if (!face) {
+        // اگر کسی جلوی دوربین نیست، چالش نیمه‌تمام باید باطل شود؛ وگرنه یک نفر
+        // می‌تواند چالش را انجام دهد و بعد عکس فرد دیگری را جلوی دوربین بگیرد.
+        if (++missingFramesRef.current >= 2) resetChallenge()
         setHint('صورتتان را مقابل دوربین قرار دهید')
+        return
+      }
+      missingFramesRef.current = 0
+      // اگر چند نفر جلوی دوربین باشند، ممکن است تردد به نام فرد اشتباه ثبت شود
+      if (count > 1) {
+        setHint('لطفاً تنها مقابل دوربین بایستید')
         return
       }
       if (face.box.width < video.videoWidth * 0.12) {
@@ -93,7 +125,31 @@ export default function Kiosk() {
         setHint(`${match.candidate.fullName} — تردد شما ثبت شده است`)
         return
       }
+      // ---------------------------------------------------- بررسی زنده بودن
+      // بدون این مرحله، گرفتن عکس چاپیِ یک همکار جلوی دوربین کافی است تا
+      // تردد به نام او ثبت شود.
+      if (livenessRequired) {
+        const challenge = challengeRef.current
+        if (challengeForRef.current !== match.candidate.employeeId) {
+          challengeForRef.current = match.candidate.employeeId
+          challenge.start()
+        }
+        challenge.push({ yaw: face.yaw, ear: face.ear })
+
+        if (challenge.state === 'timeout') {
+          resetChallenge()
+          setHint('تأیید انجام نشد — دوباره تلاش کنید')
+          return
+        }
+        if (!challenge.passed) {
+          setLiveness({ active: true, progress: challenge.progress, prompt: challenge.prompt })
+          setHint(`${match.candidate.fullName} — ${challenge.prompt}`)
+          return
+        }
+      }
+
       cooldownRef.current[match.candidate.employeeId] = Date.now()
+      resetChallenge()
 
       const snapshot = captureSnapshot(video)
       const outcome = await submitPunch({
@@ -119,7 +175,7 @@ export default function Kiosk() {
     } finally {
       busyRef.current = false
     }
-  }, [candidates, models.ready, running, screen, sync, threshold, videoRef])
+  }, [candidates, livenessRequired, models.ready, resetChallenge, running, screen, sync, threshold, videoRef])
 
   useEffect(() => {
     if (screen !== 'scan') return
@@ -133,6 +189,7 @@ export default function Kiosk() {
     const timer = setTimeout(() => {
       setScreen('scan')
       setGreeting(null)
+      resetChallenge()
       setHint('صورتتان را مقابل دوربین قرار دهید')
     }, 4000)
     return () => clearTimeout(timer)
@@ -178,6 +235,7 @@ export default function Kiosk() {
             modelsReady={models.ready}
             modelsError={models.error}
             peopleCount={candidates.length}
+            liveness={liveness}
             onPinMode={() => setScreen('pin')}
           />
         )}
@@ -296,6 +354,7 @@ function ScanOverlay({
   modelsReady,
   modelsError,
   peopleCount,
+  liveness,
   onPinMode,
 }: {
   hint: string
@@ -303,6 +362,7 @@ function ScanOverlay({
   modelsReady: boolean
   modelsError: string
   peopleCount: number
+  liveness: { active: boolean; progress: number; prompt: string }
   onPinMode: () => void
 }) {
   const blocking = cameraError || modelsError
@@ -310,10 +370,34 @@ function ScanOverlay({
   return (
     <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
       <div className="relative">
-        <div className="pulse-ring relative grid size-40 place-items-center rounded-full border-4 border-brand-400/70 text-brand-400">
+        <div
+          className={clsx(
+            'relative grid size-40 place-items-center rounded-full border-4 text-brand-400',
+            liveness.active ? 'border-amber-400 text-amber-400' : 'pulse-ring border-brand-400/70',
+          )}
+        >
           <ScanFace size={64} className="text-white" />
         </div>
       </div>
+
+      {liveness.active && (
+        <div className="w-72">
+          <div className="mb-2 flex items-center justify-center gap-2 text-amber-300">
+            <RotateCw size={18} />
+            <span className="text-sm font-medium">{liveness.prompt}</span>
+          </div>
+          {/* نوار پیشرفت، هم راهنمای کاربر است و هم برای تنظیم آستانه کمک می‌کند */}
+          <div className="h-2 overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full rounded-full bg-amber-400 transition-all duration-200"
+              style={{ width: `${Math.round(liveness.progress * 100)}%` }}
+            />
+          </div>
+          <p className="mt-2 text-center text-xs text-ink-400">
+            این مرحله جلوی ثبت تردد با عکس را می‌گیرد
+          </p>
+        </div>
+      )}
 
       {blocking ? (
         <div className="max-w-lg rounded-2xl border border-rose-400/40 bg-rose-500/15 px-6 py-4 text-rose-100">

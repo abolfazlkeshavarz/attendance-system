@@ -1,0 +1,54 @@
+# پایتون
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# پایگاه داده و فایل‌های محیطی
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+.env
+.env.local
+
+# فایل‌های آپلودشده کاربران (چهره‌ها و عکس ترددها)
+backend/app/static/faces/*
+backend/app/static/snapshots/*
+!backend/app/static/faces/.gitkeep
+!backend/app/static/snapshots/.gitkeep
+
+# فرانت‌اند
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ویرایشگرها و سیستم‌عامل
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# گزارش‌های تولیدشده
+*.xlsx
+!backend/tests/fixtures/*.xlsx
+
+# گواهی TLS محلی (برای دسترسی تبلت به دوربین روی شبکه داخلی)
+*.pfx
+cert.pem
+key.pem
+certificate.pfx
+
+# خروجی اسکریپت خلاصه کد
+code-summary.txt
+
+# پشتیبان‌ها
+backups/

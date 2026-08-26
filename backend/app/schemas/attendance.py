@@ -32,6 +32,14 @@ class PunchBatch(BaseModel):
     records: list[PunchIn] = Field(default_factory=list, max_length=1000)
 
 
+class KioskHeartbeat(BaseModel):
+    """گزارش دوره‌ای تبلت از وضعیت خودش."""
+
+    pending_count: int = Field(0, ge=0, le=100000)
+    app_version: str | None = None
+    gallery_version: str | None = None
+
+
 class PunchResult(BaseModel):
     client_uuid: str | None = None
     status: str

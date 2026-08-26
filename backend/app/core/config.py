@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     FACE_EMBEDDING_DIM: int = 128
     MIN_SECONDS_BETWEEN_PUNCHES: int = 60       # جلوگیری از ثبت تکراری
 
+    # تشخیص زنده بودن (ضد جعل با عکس). روی تبلت اجرا می‌شود.
+    REQUIRE_LIVENESS: bool = True
+    # حداقل انحراف چرخش سر از حالت روبه‌رو تا «چرخش» شمرده شود.
+    # کمتر = آسان‌گیرتر. اگر پرسنل شکایت کردند که تأیید نمی‌شود، کمی کمترش کنید.
+    LIVENESS_TURN_THRESHOLD: float = 0.06
+    LIVENESS_TIMEOUT_SECONDS: int = 12
+
+    # کوکی دسترسی به تصاویر (چهره‌ها و عکس ترددها)
+    MEDIA_COOKIE_NAME: str = "att_media"
+    # در تولید (پشت HTTPS) روی true بگذارید تا کوکی فقط روی اتصال امن ارسال شود
+    SECURE_COOKIES: bool = False
+
     # CORS — دامنه‌های مجاز پنل و تبلت
     CORS_ORIGINS: str = "*"
 

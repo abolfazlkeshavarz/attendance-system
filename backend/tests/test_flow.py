@@ -457,3 +457,116 @@ def test_report_for_future_date_is_empty(client, admin_headers):
         f"{API}/reports/daily", headers=admin_headers, params={"jalali_date": future}
     ).json()
     assert body["total"] == 0
+
+
+def test_hourly_leave_reduces_expected_and_suppresses_late(client, admin_headers, work_day):
+    """مرخصی ساعتی تأییدشده نباید تأخیر بسازد و باید موظفی آن روز را کم کند."""
+    emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "1500", "first_name": "نازنین", "last_name": "شفیعی"},
+    ).json()
+    shifts = client.get(f"{API}/org/shifts", headers=admin_headers).json()
+    office = next(s for s in shifts if s["name"] == "شیفت اداری")
+    client.patch(
+        f"{API}/employees/{emp['id']}", headers=admin_headers, json={"shift_id": office["id"]}
+    )
+
+    day = jalali_str(work_day)
+    # شیفت اداری ۸ تا ۱۶ است؛ این شخص ۸ تا ۱۰ مرخصی ساعتی دارد و ۱۰ می‌آید
+    for kind, clock in (("in", "10:00"), ("out", "16:00")):
+        res = client.post(
+            f"{API}/attendance/manual",
+            headers=admin_headers,
+            json={"employee_id": emp["id"], "kind": kind, "jalali_date": day, "clock": clock},
+        )
+        assert res.status_code == 201, res.text
+
+    def day_row():
+        body = client.get(
+            f"{API}/reports/daily", headers=admin_headers, params={"jalali_date": day}
+        ).json()
+        return next(r for r in body["items"] if r["personnel_code"] == "1500")
+
+    # بدون مرخصی: ۲ ساعت تأخیر و موظفی کامل (۴۵۰ دقیقه)
+    before = day_row()
+    assert before["late_minutes"] == 110  # ۱۲۰ منهای ۱۰ دقیقه ارفاق
+    assert before["expected_minutes"] == 450
+
+    leave = client.post(
+        f"{API}/leaves",
+        headers=admin_headers,
+        json={
+            "employee_id": emp["id"],
+            "leave_type": "hourly",
+            "start_jalali_date": day,
+            "end_jalali_date": day,
+            "start_clock": "08:00",
+            "end_clock": "10:00",
+            "reason": "مراجعه به پزشک",
+        },
+    ).json()
+    client.patch(f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"status": "approved"})
+
+    after = day_row()
+    assert after["status"] == "present"
+    assert after["late_minutes"] == 0, "مرخصی ساعتی ابتدای روز نباید تأخیر حساب شود"
+    # موظفی ۴۵۰ منهای ۱۲۰ دقیقه مرخصی
+    assert after["expected_minutes"] == 330
+    assert after["leave_minutes"] == 120
+
+    # و در خلاصه دوره‌ای هم دیده شود
+    summary = client.get(
+        f"{API}/reports/summary",
+        headers=admin_headers,
+        params={"period": "custom", "from_jalali": day, "to_jalali": day},
+    ).json()
+    row = next(r for r in summary["items"] if r["personnel_code"] == "1500")
+    assert row["hourly_leave_minutes"] == 120
+
+
+def test_face_images_are_not_publicly_readable(client, admin_headers):
+    """تصاویر چهره و عکس ترددها داده شخصی‌اند و نباید بدون احراز هویت خوانده شوند."""
+    # یک تصویر واقعی از طریق ثبت چهره بساز
+    tiny_jpeg = (
+        "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL"
+        "DBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB"
+        "AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+    )
+    emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "1600", "first_name": "آزمون", "last_name": "تصویر"},
+    ).json()
+    face = client.post(
+        f"{API}/employees/{emp['id']}/faces",
+        headers=admin_headers,
+        json={"vector": [0.2] * 128, "image_base64": tiny_jpeg},
+    ).json()
+    assert face["image_path"], "تصویر نمونه ذخیره نشد"
+
+    url = f"/static/{face['image_path']}"
+
+    # بدون هیچ اعتبارنامه‌ای → باید رد شود
+    anonymous = client.get(url, headers={"Cookie": ""})
+    assert anonymous.status_code == 401, "تصویر چهره عمومی است!"
+
+    # با توکن معتبر → باید بدهد
+    allowed = client.get(url, headers=admin_headers)
+    assert allowed.status_code == 200
+    assert allowed.content[:2] == b"\xff\xd8"  # سرآیند JPEG
+
+
+def test_kiosk_heartbeat_reports_queue_depth(client, device, admin_headers):
+    headers = {"X-Device-Key": device["api_key"]}
+    res = client.post(
+        f"{API}/kiosk/heartbeat",
+        headers=headers,
+        json={"pending_count": 7, "app_version": "1.0.0"},
+    )
+    assert res.status_code == 200, res.text
+
+    devices = client.get(f"{API}/devices", headers=admin_headers).json()
+    row = next(d for d in devices if d["device_uid"] == device["device_uid"])
+    assert row["pending_count"] == 7
+    assert row["app_version"] == "1.0.0"

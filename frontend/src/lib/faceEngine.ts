@@ -9,6 +9,7 @@
  * می‌شود (هرچه کمتر، شبیه‌تر). آستانه پیش‌فرض ۰٫۵۵ است و از سرور خوانده می‌شود.
  */
 import * as faceapi from '@vladmandic/face-api'
+import { eyeAspectRatio, horizontalYaw } from './liveness'
 
 const MODEL_URL = '/models'
 
@@ -23,6 +24,10 @@ export interface DetectedFace {
   descriptor: Float32Array
   box: { x: number; y: number; width: number; height: number }
   score: number
+  /** معیار چرخش افقی سر — ورودی تشخیص زنده بودن */
+  yaw: number
+  /** میانگین باز بودن چشم‌ها — برای تشخیص پلک */
+  ear: number
 }
 
 export interface MatchCandidate {
@@ -37,6 +42,20 @@ export interface MatchCandidate {
 export interface MatchResult {
   candidate: MatchCandidate
   distance: number
+}
+
+
+/** نقاط کلیدی چهره را به معیارهای «زنده بودن» تبدیل می‌کند. */
+function livenessSignals(landmarks: faceapi.FaceLandmarks68): { yaw: number; ear: number } {
+  const leftEye = landmarks.getLeftEye()
+  const rightEye = landmarks.getRightEye()
+  const nose = landmarks.getNose()
+  // در مدل ۶۸ نقطه‌ای، نقطه ۳۰ نوک بینی است و getNose از نقطه ۲۷ شروع می‌شود
+  const noseTip = nose[3] ?? nose[0]
+  return {
+    yaw: horizontalYaw(noseTip, leftEye, rightEye),
+    ear: (eyeAspectRatio(leftEye) + eyeAspectRatio(rightEye)) / 2,
+  }
 }
 
 type Status = 'idle' | 'loading' | 'ready' | 'error'
@@ -128,14 +147,44 @@ class FaceEngine {
       descriptor: result.descriptor,
       box: { x, y, width, height },
       score: result.detection.score,
+      ...livenessSignals(result.landmarks),
     }
   }
 
-  /** همه چهره‌های تصویر (برای هشدار «چند نفر جلوی دوربین‌اند»). */
-  async detectAll(input: HTMLVideoElement | HTMLCanvasElement): Promise<number> {
-    if (!this.ready) return 0
-    const results = await faceapi.detectAllFaces(input, this.options)
-    return results.length
+  /**
+   * تشخیص با گزارش تعداد نفرات داخل کادر — در یک بار پردازش.
+   *
+   * اگر دو نفر جلوی دوربین باشند، `detectSingleFace` بی‌سروصدا یکی را انتخاب
+   * می‌کند و ممکن است تردد به نام نفر اشتباه ثبت شود. اینجا تعداد را هم
+   * برمی‌گردانیم تا تبلت در این حالت ثبت نکند و از کاربر بخواهد تنها بایستد.
+   *
+   * «نفر اصلی» بزرگ‌ترین چهره است، یعنی نزدیک‌ترین فرد به دوربین.
+   */
+  async detectPrimary(
+    input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement,
+  ): Promise<{ face: DetectedFace | null; count: number }> {
+    if (!this.ready) return { face: null, count: 0 }
+
+    const results = await faceapi
+      .detectAllFaces(input, this.options)
+      .withFaceLandmarks()
+      .withFaceDescriptors()
+
+    if (results.length === 0) return { face: null, count: 0 }
+
+    const biggest = results.reduce((best, current) =>
+      current.detection.box.area > best.detection.box.area ? current : best,
+    )
+    const { x, y, width, height } = biggest.detection.box
+    return {
+      face: {
+        descriptor: biggest.descriptor,
+        box: { x, y, width, height },
+        score: biggest.detection.score,
+        ...livenessSignals(biggest.landmarks),
+      },
+      count: results.length,
+    }
   }
 }
 

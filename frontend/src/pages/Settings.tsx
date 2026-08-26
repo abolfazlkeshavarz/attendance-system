@@ -4,6 +4,7 @@ import {
   Building2,
   CalendarOff,
   Clock,
+  CloudOff,
   Copy,
   KeyRound,
   Plus,
@@ -671,6 +672,23 @@ function DevicesTab() {
                   <dd className="text-ink-700">
                     {d.last_sync_at ? new Date(d.last_sync_at).toLocaleString('fa-IR') : '—'}
                   </dd>
+                </div>
+                <div>
+                  <dt className="text-ink-400">تردد ارسال‌نشده</dt>
+                  <dd>
+                    {d.pending_count > 0 ? (
+                      <span className="badge bg-amber-50 text-amber-700">
+                        <CloudOff size={12} />
+                        {toPersianDigits(d.pending_count)} مورد در صف
+                      </span>
+                    ) : (
+                      <span className="text-emerald-700">همه ارسال شده</span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-ink-400">نسخه برنامه</dt>
+                  <dd className="text-ink-700">{toPersianDigits(d.app_version ?? '—')}</dd>
                 </div>
               </dl>
             </div>

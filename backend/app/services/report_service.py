@@ -98,6 +98,7 @@ class PeriodSummary:
     late_count: int = 0
     early_leave_minutes: int = 0
     overtime_minutes: int = 0
+    hourly_leave_minutes: int = 0
     days: list[DaySummary] = field(default_factory=list)
 
     @property
@@ -130,6 +131,8 @@ class PeriodSummary:
             "early_leave_minutes": self.early_leave_minutes,
             "overtime_minutes": self.overtime_minutes,
             "overtime_hhmm": fmt_duration(self.overtime_minutes),
+            "hourly_leave_minutes": self.hourly_leave_minutes,
+            "hourly_leave_hhmm": fmt_duration(self.hourly_leave_minutes),
             "attendance_rate": self.attendance_rate,
         }
 
@@ -146,6 +149,40 @@ def _shift_bounds(day: date, shift: Shift) -> tuple[datetime, datetime]:
     end_day = day + timedelta(days=1) if shift.crosses_midnight else day
     end = datetime.combine(end_day, shift.end_time, tzinfo=TEHRAN)
     return start, end
+
+
+def _covered_until(leaves: list[LeaveRequest], shift_start: datetime) -> datetime:
+    """اگر مرخصی تأییدشده‌ای ابتدای شیفت را پوشش می‌دهد، شروع مؤثر شیفت را عقب می‌برد.
+
+    مثال: مرخصی ۸ تا ۱۰ و ورود ساعت ۱۰ ⇒ دو ساعت تأخیر ثبت نمی‌شود.
+    """
+    effective = shift_start
+    # چند مرخصی پشت‌سرهم هم پوشش داده می‌شود
+    for _ in range(len(leaves)):
+        extended = False
+        for lv in leaves:
+            start, end = _aware(lv.start_at), _aware(lv.end_at)
+            if start <= effective < end:
+                effective = end
+                extended = True
+        if not extended:
+            break
+    return effective
+
+
+def _covered_from(leaves: list[LeaveRequest], shift_end: datetime) -> datetime:
+    """قرینه تابع بالا برای انتهای شیفت (مرخصی ساعتی آخر روز = تعجیل نیست)."""
+    effective = shift_end
+    for _ in range(len(leaves)):
+        extended = False
+        for lv in leaves:
+            start, end = _aware(lv.start_at), _aware(lv.end_at)
+            if start < effective <= end:
+                effective = start
+                extended = True
+        if not extended:
+            break
+    return effective
 
 
 def _pair_sessions(punches: list[AttendanceRecord]) -> tuple[int, bool]:
@@ -298,13 +335,24 @@ def _summarize_day(
             s.status = DayStatus.INCOMPLETE.value if open_session else DayStatus.PRESENT.value
             if shift is not None:
                 shift_start, shift_end = _shift_bounds(day, shift)
+
+                # مرخصی ساعتی تأییدشده: ساعاتش نه غیبت است و نه تأخیر/تعجیل.
+                # موظفی آن روز به همان اندازه کم می‌شود.
+                covered_start = _covered_until(leaves, shift_start)
+                covered_end = _covered_from(leaves, shift_end)
+                effective_start = max(shift_start, covered_start)
+                effective_end = min(shift_end, covered_end)
+
                 if s.first_in:
-                    late = int((s.first_in - shift_start).total_seconds() // 60)
+                    late = int((s.first_in - effective_start).total_seconds() // 60)
                     s.late_minutes = max(0, late - shift.grace_in_minutes)
                 if s.last_out and not open_session:
-                    early = int((shift_end - s.last_out).total_seconds() // 60)
+                    early = int((effective_end - s.last_out).total_seconds() // 60)
                     s.early_leave_minutes = max(0, early - shift.grace_out_minutes)
-                s.overtime_minutes = max(0, worked - shift.expected_minutes)
+
+                if s.leave_minutes:
+                    s.expected_minutes = max(0, shift.expected_minutes - s.leave_minutes)
+                s.overtime_minutes = max(0, worked - s.expected_minutes)
     elif s.status not in (DayStatus.HOLIDAY.value, DayStatus.WEEKEND.value):
         if day_leave is not None:
             s.status = (
@@ -338,6 +386,9 @@ def summarize_period(
             ps.late_minutes += d.late_minutes
             ps.early_leave_minutes += d.early_leave_minutes
             ps.overtime_minutes += d.overtime_minutes
+            # فقط مرخصی ساعتیِ روزهای حاضر (روز کامل مرخصی جداگانه شمرده می‌شود)
+            if d.status in (DayStatus.PRESENT.value, DayStatus.INCOMPLETE.value):
+                ps.hourly_leave_minutes += d.leave_minutes
             if d.late_minutes > 0:
                 ps.late_count += 1
             if d.status == DayStatus.PRESENT.value:

@@ -1,12 +1,14 @@
 """ورود به پنل مدیریت و مدیریت کاربران."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
+from app.core.config import settings
 from app.core.security import (
     create_access_token,
+    create_media_token,
     create_refresh_token,
     decode_token,
     hash_password,
@@ -28,8 +30,25 @@ from app.schemas.common import Message
 router = APIRouter()
 
 
+def _set_media_cookie(response: Response, user_id: int) -> None:
+    """کوکی HttpOnly برای بارگذاری تصاویر از مسیر /static.
+
+    مرورگر این کوکی را خودش همراه درخواست `<img>` می‌فرستد؛ بنابراین تصاویر
+    چهره بدون اینکه عمومی باشند نمایش داده می‌شوند.
+    """
+    response.set_cookie(
+        key=settings.MEDIA_COOKIE_NAME,
+        value=create_media_token(user_id),
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        httponly=True,
+        samesite="lax",
+        secure=settings.SECURE_COOKIES,
+        path="/static",
+    )
+
+
 @router.post("/login", response_model=TokenPair, summary="ورود مدیر")
-def login(payload: LoginRequest, db: DbSession) -> TokenPair:
+def login(payload: LoginRequest, db: DbSession, response: Response) -> TokenPair:
     user = db.execute(
         select(User).where(User.username == payload.username.strip().lower())
     ).scalar_one_or_none()
@@ -40,6 +59,7 @@ def login(payload: LoginRequest, db: DbSession) -> TokenPair:
         )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="حساب کاربری غیرفعال است")
+    _set_media_cookie(response, user.id)
     return TokenPair(
         access_token=create_access_token(user.id, user.role),
         refresh_token=create_refresh_token(user.id),
@@ -47,17 +67,24 @@ def login(payload: LoginRequest, db: DbSession) -> TokenPair:
 
 
 @router.post("/refresh", response_model=TokenPair, summary="تمدید توکن")
-def refresh(payload: RefreshRequest, db: DbSession) -> TokenPair:
+def refresh(payload: RefreshRequest, db: DbSession, response: Response) -> TokenPair:
     data = decode_token(payload.refresh_token)
     if data is None or data.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="توکن تمدید نامعتبر است")
     user = db.get(User, int(data.get("sub", 0)))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="کاربر معتبر نیست")
+    _set_media_cookie(response, user.id)
     return TokenPair(
         access_token=create_access_token(user.id, user.role),
         refresh_token=create_refresh_token(user.id),
     )
+
+
+@router.post("/logout", response_model=Message, summary="خروج و پاک کردن کوکی تصاویر")
+def logout(response: Response) -> Message:
+    response.delete_cookie(settings.MEDIA_COOKIE_NAME, path="/static")
+    return Message(detail="خارج شدید")
 
 
 @router.get("/me", response_model=UserOut, summary="اطلاعات کاربر جاری")
