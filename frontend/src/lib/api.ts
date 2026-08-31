@@ -71,7 +71,11 @@ api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
     const original = error.config as (typeof error.config & { _retried?: boolean }) | undefined
-    if (error.response?.status === 401 && original && !original._retried) {
+    // ۴۰۱ روی خودِ درخواست ورود یعنی «رمز اشتباه است»، نه «نشست منقضی شده» —
+    // نباید تلاش برای refresh یا هدایت به /login راه بیفتد (مثلاً از داخل
+    // صفحه ورود مدیر در تبلت، که اصلاً نباید کاربر را از /kiosk خارج کند)
+    const isLoginCall = original?.url?.includes('/auth/login')
+    if (error.response?.status === 401 && original && !original._retried && !isLoginCall) {
       original._retried = true
       refreshing ??= refreshAccessToken().finally(() => {
         refreshing = null

@@ -1,0 +1,73 @@
+# استقرار محلی با Docker — بدون دامنه، بدون Let's Encrypt، بدون certbot.
+# برای آزمایش کل سامانه (پایگاه داده + سرور + رابط کاربری) روی همین سیستم، و
+# برای اتصال گوشی به‌عنوان تبلت ورودی از طریق شبکه داخلی.
+# استفاده: make local-up  (به‌جای صدا زدن مستقیم docker compose)
+#
+# فرقش با docker-compose.yml (VPS): اینجا به‌جای Let's Encrypt از یک گواهی
+# خودامضا (cert.pem/key.pem — ساخته‌شده با «make local-cert») استفاده می‌شود
+# و nginx.local.conf.template به‌جای قالب اصلی؛ سرویس certbot هم اصلاً وجود ندارد.
+
+name: attendance-local
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-attendance}
+      POSTGRES_USER: ${POSTGRES_USER:-attendance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD را در فایل .env.local تنظیم کنید}
+      TZ: ${TIMEZONE:-Asia/Tehran}
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-attendance} -d ${POSTGRES_DB:-attendance}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-attendance}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-attendance}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY را در فایل .env.local تنظیم کنید}
+      FIRST_ADMIN_USERNAME: ${FIRST_ADMIN_USERNAME:-admin}
+      FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD:-admin1234}
+      FIRST_ADMIN_NAME: ${FIRST_ADMIN_NAME:-مدیر سامانه}
+      TIMEZONE: ${TIMEZONE:-Asia/Tehran}
+      # فقط محیط محلی: مستندات Swagger (/docs) برای آزمایش سریع فعال بماند
+      DEBUG: "true"
+      # روی HTTP محلی هستیم، پس کوکی نباید به «فقط HTTPS» محدود شود
+      SECURE_COOKIES: "false"
+      CORS_ORIGINS: http://localhost:${LOCAL_PORT:-8080}
+      FACE_MATCH_THRESHOLD: ${FACE_MATCH_THRESHOLD:-0.60}
+      REQUIRE_LIVENESS: ${REQUIRE_LIVENESS:-true}
+      LIVENESS_TURN_THRESHOLD: ${LIVENESS_TURN_THRESHOLD:-0.06}
+      LIVENESS_TIMEOUT_SECONDS: ${LIVENESS_TIMEOUT_SECONDS:-12}
+    volumes:
+      - media_local:/app/app/static
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      BACKEND_UPSTREAM: backend:8000
+    volumes:
+      - ./frontend/docker/nginx.local.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./cert.pem:/etc/nginx/certs/local-cert.pem:ro
+      - ./key.pem:/etc/nginx/certs/local-key.pem:ro
+    ports:
+      - "${LOCAL_PORT:-8080}:80"
+      - "${LOCAL_HTTPS_PORT:-8443}:443"
+
+volumes:
+  postgres_data_local:
+  media_local:

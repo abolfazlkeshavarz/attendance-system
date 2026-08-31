@@ -1,9 +1,39 @@
 // frontend/src/components/JalaliDatePicker.tsx
-import React, { useState, useEffect, useRef } from 'react'
+import RawDatePicker from 'react-multi-date-picker'
+import DateObject from 'react-date-object'
+import rawPersian from 'react-date-object/calendars/persian'
+import rawPersianFa from 'react-date-object/locales/persian_fa'
 import { Calendar } from 'lucide-react'
-import { toPersianDigits } from '../lib/jalali'
 
-// کامپوننت ساده و مستقل - بدون وابستگی به کتابخانه‌های خارجی
+/**
+ * این کتابخانه‌ها به‌صورت UMD ساخته شده‌اند و Vite/esbuild همیشه نمی‌تواند
+ * export پیش‌فرض واقعی را از خود شیء CJS تشخیص دهد — گاهی به‌جای کامپوننت،
+ * کل شیء exports را برمی‌گرداند (که export واقعی زیر کلید .default آن است).
+ * این تابع مستقل از رفتار باندلر، مقدار درست را برمی‌گرداند.
+ */
+function unwrapDefault<T>(mod: T | { default: T }): T {
+  return (mod as { default?: T })?.default ?? (mod as T)
+}
+
+const DatePicker = unwrapDefault(RawDatePicker)
+const persian = unwrapDefault(rawPersian)
+const persian_fa = unwrapDefault(rawPersianFa)
+
+/** «۱۴۰۳/۰۵/۱۲» → اجزای عددی (بدون توجه به رقم فارسی/لاتین ورودی) */
+function parseJalaliString(value: string): { year: number; month: number; day: number } | null {
+  const normalized = value
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+  const parts = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+  if (!parts) return null
+  return { year: Number(parts[1]), month: Number(parts[2]), day: Number(parts[3]) }
+}
+
+/** DateObject کتابخانه را به رشته «YYYY/MM/DD» با ارقام لاتین (قالب مورد انتظار سرور) تبدیل می‌کند. */
+function toApiString(date: DateObject): string {
+  return `${date.year}/${String(date.month.number).padStart(2, '0')}/${String(date.day).padStart(2, '0')}`
+}
+
 export function JalaliDatePicker({
   value,
   onChange,
@@ -17,83 +47,27 @@ export function JalaliDatePicker({
   disabled?: boolean
   className?: string
 }) {
-  const [displayValue, setDisplayValue] = useState('')
-  const [isValid, setIsValid] = useState(true)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  // وقتی value از بیرون تغییر می‌کند
-  useEffect(() => {
-    if (value) {
-      const parts = value.split('/')
-      if (parts.length === 3) {
-        setDisplayValue(`${toPersianDigits(parts[0])}/${toPersianDigits(parts[1])}/${toPersianDigits(parts[2])}`)
-        setIsValid(true)
-      } else {
-        setDisplayValue(value)
-      }
-    } else {
-      setDisplayValue('')
-      setIsValid(true)
-    }
-  }, [value])
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value
-    setDisplayValue(raw)
-    
-    // تبدیل اعداد فارسی به لاتین
-    const normalized = raw
-      .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
-      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
-      .replace(/[^0-9/]/g, '')
-    
-    if (normalized === '') {
-      // فیلد خالی درست است، ولی «متنی که هیچ رقمی ندارد» باید نامعتبر نشان داده شود
-      setIsValid(raw.trim() === '')
-      onChange('')
-      return
-    }
-
-    // ماه و روز یک‌رقمی هم پذیرفته می‌شود: «۱۴۰۵/۶/۳» → «1405/06/03»
-    const parts = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
-    if (!parts) {
-      setIsValid(false)
-      return
-    }
-
-    const [, year, month, day] = parts
-    const m = Number(month)
-    const d = Number(day)
-    // اسفند ۳۰ روز دارد و بقیه ماه‌ها حداکثر ۳۱ روز
-    if (m < 1 || m > 12 || d < 1 || d > 31 || (m === 12 && d > 30)) {
-      setIsValid(false)
-      return
-    }
-
-    setIsValid(true)
-    onChange(`${year}/${month.padStart(2, '0')}/${day.padStart(2, '0')}`)
-  }
-
-  // کلیک روی آیکون، فوکوس روی input
-  const handleIconClick = () => {
-    inputRef.current?.focus()
-  }
+  const parsed = value ? parseJalaliString(value) : null
+  const dateValue = parsed
+    ? new DateObject({ year: parsed.year, month: parsed.month, day: parsed.day, calendar: persian, locale: persian_fa })
+    : undefined
 
   return (
     <div className={`relative ${className ?? ''}`}>
-      <input
-        ref={inputRef}
-        className={`input ps-10 ${!isValid ? 'border-rose-500 ring-rose-100' : ''}`}
-        value={displayValue}
-        onChange={handleChange}
+      <DatePicker
+        calendar={persian}
+        locale={persian_fa}
+        value={dateValue}
+        onChange={(date) => onChange(date ? toApiString(date as DateObject) : '')}
+        inputClass="input ps-10"
         placeholder={placeholder}
         disabled={disabled}
-        dir="ltr"
+        containerClassName="w-full"
+        calendarPosition="bottom-right"
       />
       <Calendar
         size={16}
         className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-ink-400"
-        onClick={handleIconClick}
       />
     </div>
   )
