@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   CheckCircle2,
   CloudOff,
@@ -6,16 +7,23 @@ import {
   Delete,
   Fingerprint,
   KeyRound,
+  Lock,
   LogIn,
   LogOut,
   RefreshCw,
   RotateCw,
   ScanFace,
+  Search,
   Settings2,
+  ShieldCheck,
+  ShieldOff,
+  User as UserIcon,
   Users,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { deviceKey, errorMessage, kioskApi } from '../lib/api'
+import { api, deviceKey, errorMessage, kioskApi } from '../lib/api'
+import { useAuth } from '../lib/auth'
+import type { Employee, Page } from '../lib/types'
 import { jalaliLong, tehranClock, toPersianDigits } from '../lib/jalali'
 import {
   captureSnapshot,
@@ -26,6 +34,8 @@ import {
   type MatchResult,
 } from '../lib/faceEngine'
 import { LivenessChallenge } from '../lib/liveness'
+import { FaceEnrollModal } from '../pages/FaceEnrollModal'
+import { FingerprintEnrollModal } from '../pages/FingerprintEnrollModal'
 import {
   hasDeviceKey,
   submitPunch,
@@ -37,7 +47,10 @@ import {
   useSyncQueue,
 } from './useKiosk'
 
-type Screen = 'setup' | 'scan' | 'result' | 'pin'
+type Screen = 'setup' | 'scan' | 'result' | 'pin' | 'admin-login' | 'admin'
+
+// دستگاه در دسترس عموم است؛ اگر مدیر چند دقیقه بی‌کار بماند، خودکار خارج می‌شود
+const ADMIN_IDLE_TIMEOUT_MS = 120_000
 
 interface Greeting {
   name: string
@@ -59,7 +72,19 @@ export default function Kiosk() {
   const models = useFaceModels(paired)
   const kioskSettings = useKioskSettings(paired)
   const livenessRequired = kioskSettings.require_liveness
-  const { videoRef, error: cameraError, running } = useCamera(paired)
+  // در حالت مدیر، دوربین را خودمان به FaceEnrollModal می‌سپاریم — دو درخواست
+  // هم‌زمان getUserMedia برای یک دوربین با هم تداخل می‌کنند
+  const inAdminMode = screen === 'admin-login' || screen === 'admin'
+  const faceEnabled = kioskSettings.face_enabled
+  const pinEnabled = kioskSettings.pin_enabled
+  const { videoRef, error: cameraError, running } = useCamera(paired && !inAdminMode && faceEnabled)
+
+  const logout = useAuth((s) => s.logout)
+  const exitAdminMode = useCallback(() => {
+    logout()
+    setScreen('scan')
+  }, [logout])
+  useIdleLogout(inAdminMode, exitAdminMode)
 
   const [greeting, setGreeting] = useState<Greeting | null>(null)
   const [hint, setHint] = useState('صورتتان را مقابل دوربین قرار دهید')
@@ -88,7 +113,7 @@ export default function Kiosk() {
 
   // ------------------------------------------------------------- حلقه تشخیص
   const scanTick = useCallback(async () => {
-    if (busyRef.current || !running || !models.ready || screen !== 'scan') return
+    if (!faceEnabled || busyRef.current || !running || !models.ready || screen !== 'scan') return
     const video = videoRef.current
     if (!video || video.readyState < 2) return
 
@@ -175,7 +200,7 @@ export default function Kiosk() {
     } finally {
       busyRef.current = false
     }
-  }, [candidates, livenessRequired, models.ready, resetChallenge, running, screen, sync, threshold, videoRef])
+  }, [candidates, faceEnabled, livenessRequired, models.ready, resetChallenge, running, screen, sync, threshold, videoRef])
 
   useEffect(() => {
     if (screen !== 'scan') return
@@ -207,12 +232,14 @@ export default function Kiosk() {
         syncing={sync.syncing || syncing}
         peopleCount={candidates.length}
         savedAt={savedAt}
+        inAdminMode={inAdminMode}
         onRefresh={() => void refresh(true)}
         onSync={() => void sync.flush()}
         onReset={() => {
           deviceKey.clear()
           setScreen('setup')
         }}
+        onAdminToggle={() => (inAdminMode ? exitAdminMode() : setScreen('admin-login'))}
       />
 
       <div className="relative flex flex-1 items-center justify-center">
@@ -223,7 +250,7 @@ export default function Kiosk() {
           playsInline
           className={clsx(
             'absolute inset-0 h-full w-full scale-x-[-1] object-cover transition',
-            screen === 'result' ? 'blur-md brightness-50' : 'brightness-90',
+            !faceEnabled ? 'opacity-0' : screen === 'result' || inAdminMode ? 'blur-md brightness-50' : 'brightness-90',
           )}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/25 to-ink-900/60" />
@@ -236,6 +263,9 @@ export default function Kiosk() {
             modelsError={models.error}
             peopleCount={candidates.length}
             liveness={liveness}
+            faceEnabled={faceEnabled}
+            pinEnabled={pinEnabled}
+            fingerprintEnabled={kioskSettings.fingerprint_enabled}
             onPinMode={() => setScreen('pin')}
           />
         )}
@@ -252,6 +282,12 @@ export default function Kiosk() {
             onCancel={() => setScreen('scan')}
           />
         )}
+
+        {screen === 'admin-login' && (
+          <AdminLogin onSuccess={() => setScreen('admin')} onCancel={exitAdminMode} />
+        )}
+
+        {screen === 'admin' && <AdminEnroll onExit={exitAdminMode} />}
       </div>
 
       <footer className="flex items-center justify-between px-8 py-4 text-sm text-ink-300">
@@ -284,18 +320,22 @@ function TopBar({
   syncing,
   peopleCount,
   savedAt,
+  inAdminMode,
   onRefresh,
   onSync,
   onReset,
+  onAdminToggle,
 }: {
   online: boolean
   pending: number
   syncing: boolean
   peopleCount: number
   savedAt: number | null
+  inAdminMode: boolean
   onRefresh: () => void
   onSync: () => void
   onReset: () => void
+  onAdminToggle: () => void
 }) {
   return (
     <header className="z-10 flex items-center gap-3 border-b border-white/10 bg-ink-900/80 px-6 py-3 backdrop-blur">
@@ -336,6 +376,16 @@ function TopBar({
         <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
       </button>
       <button
+        onClick={onAdminToggle}
+        className={clsx(
+          'rounded-lg p-2 transition hover:bg-white/10 hover:text-white',
+          inAdminMode ? 'text-amber-300' : 'text-ink-300',
+        )}
+        title={inAdminMode ? 'خروج از حالت مدیر' : 'ورود مدیر — ثبت چهره پرسنل'}
+      >
+        {inAdminMode ? <ShieldOff size={16} /> : <ShieldCheck size={16} />}
+      </button>
+      <button
         onClick={onReset}
         className="rounded-lg p-2 text-ink-300 transition hover:bg-white/10 hover:text-white"
         title="تنظیمات دستگاه"
@@ -344,6 +394,27 @@ function TopBar({
       </button>
     </header>
   )
+}
+
+// ------------------------------------------------------------- بی‌کاری خودکار
+
+/** روی یک دستگاه عمومی، اگر مدیر چند دقیقه در حالت مدیر بی‌کار بماند، خودکار خارج شود. */
+function useIdleLogout(active: boolean, onIdle: () => void) {
+  useEffect(() => {
+    if (!active) return
+    let timer = setTimeout(onIdle, ADMIN_IDLE_TIMEOUT_MS)
+    const reset = () => {
+      clearTimeout(timer)
+      timer = setTimeout(onIdle, ADMIN_IDLE_TIMEOUT_MS)
+    }
+    window.addEventListener('pointerdown', reset)
+    window.addEventListener('keydown', reset)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('pointerdown', reset)
+      window.removeEventListener('keydown', reset)
+    }
+  }, [active, onIdle])
 }
 
 // ------------------------------------------------------------------ صفحه اسکن
@@ -355,6 +426,9 @@ function ScanOverlay({
   modelsError,
   peopleCount,
   liveness,
+  faceEnabled,
+  pinEnabled,
+  fingerprintEnabled,
   onPinMode,
 }: {
   hint: string
@@ -363,9 +437,37 @@ function ScanOverlay({
   modelsError: string
   peopleCount: number
   liveness: { active: boolean; progress: number; prompt: string }
+  faceEnabled: boolean
+  pinEnabled: boolean
+  fingerprintEnabled: boolean
   onPinMode: () => void
 }) {
   const blocking = cameraError || modelsError
+
+  // اگر تشخیص چهره غیرفعال است، دوربین اصلاً روشن نمی‌شود — به‌جای کادر
+  // اسکن، فقط روش‌های فعال را نشان می‌دهیم
+  if (!faceEnabled) {
+    return (
+      <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
+        <div className="grid size-40 place-items-center rounded-full border-4 border-white/20 text-ink-300">
+          <KeyRound size={64} />
+        </div>
+        <h2 className="text-2xl font-bold">
+          {pinEnabled
+            ? 'برای ثبت تردد از کد پرسنلی استفاده کنید'
+            : fingerprintEnabled
+              ? 'برای ثبت تردد انگشت خود را روی دستگاه کنار درب بگذارید'
+              : 'روش تأیید هویتی برای این دستگاه فعال نیست'}
+        </h2>
+        {pinEnabled && (
+          <button onClick={onPinMode} className="btn bg-white/10 px-6 py-3 text-base text-white hover:bg-white/20">
+            <KeyRound size={18} />
+            ثبت با کد پرسنلی
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="relative z-10 flex flex-col items-center gap-6 px-6 text-center">
@@ -421,10 +523,12 @@ function ScanOverlay({
         </>
       )}
 
-      <button onClick={onPinMode} className="btn bg-white/10 px-6 py-3 text-base text-white hover:bg-white/20">
-        <KeyRound size={18} />
-        ثبت با کد پرسنلی
-      </button>
+      {pinEnabled && (
+        <button onClick={onPinMode} className="btn bg-white/10 px-6 py-3 text-base text-white hover:bg-white/20">
+          <KeyRound size={18} />
+          ثبت با کد پرسنلی
+        </button>
+      )}
     </div>
   )
 }
@@ -491,9 +595,7 @@ function PinPad({
     setBusy(true)
     setError('')
     try {
-      const res = await kioskApi.post('/kiosk/punch/pin', null, {
-        params: { personnel_code: code, pin },
-      })
+      const res = await kioskApi.post('/kiosk/punch/pin', { personnel_code: code, pin })
       onDone({
         name: res.data.message?.split(' — ')[0] ?? 'پرسنل',
         kind: (res.data.kind as 'in' | 'out') ?? 'in',
@@ -644,6 +746,214 @@ function SetupScreen({ onPaired }: { onPaired: () => void }) {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ------------------------------------------------------- ورود مدیر برای ثبت چهره
+
+function AdminLogin({ onSuccess, onCancel }: { onSuccess: () => void; onCancel: () => void }) {
+  const login = useAuth((s) => s.login)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      await login(username.trim(), password)
+      const role = useAuth.getState().user?.role
+      if (role !== 'admin' && role !== 'manager') {
+        useAuth.getState().logout()
+        setError('این کاربر اجازه ثبت چهره پرسنل را ندارد.')
+        return
+      }
+      onSuccess()
+    } catch (err) {
+      setError(errorMessage(err, 'ورود ناموفق بود'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="relative z-10 w-full max-w-sm rounded-3xl bg-ink-800/95 p-6 backdrop-blur"
+    >
+      <div className="mb-5 text-center">
+        <div className="mx-auto mb-3 grid size-12 place-items-center rounded-2xl bg-brand-600">
+          <ShieldCheck size={24} />
+        </div>
+        <h3 className="text-xl font-bold">ورود مدیر</h3>
+        <p className="mt-1 text-sm text-ink-400">برای ثبت چهره پرسنل، با حساب مدیر یا سرپرست وارد شوید</p>
+      </div>
+
+      <div className="relative mb-3">
+        <UserIcon
+          size={16}
+          className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-ink-500"
+        />
+        <input
+          className="input ps-10 bg-ink-900 text-white placeholder:text-ink-500"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="نام کاربری"
+          autoFocus
+          autoComplete="username"
+          required
+        />
+      </div>
+
+      <div className="relative mb-4">
+        <Lock
+          size={16}
+          className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-ink-500"
+        />
+        <input
+          className="input ps-10 bg-ink-900 text-white placeholder:text-ink-500"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="رمز عبور"
+          autoComplete="current-password"
+          required
+        />
+      </div>
+
+      {error && (
+        <p className="mb-3 rounded-xl bg-rose-500/15 px-3 py-2 text-center text-sm text-rose-200">
+          {error}
+        </p>
+      )}
+
+      <button type="submit" className="btn-primary w-full py-3" disabled={busy}>
+        {busy && <RefreshCw size={16} className="animate-spin" />}
+        ورود
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="mt-3 w-full py-2.5 text-sm text-ink-400 hover:text-white"
+      >
+        انصراف و بازگشت به تشخیص چهره
+      </button>
+    </form>
+  )
+}
+
+// -------------------------------------------------- انتخاب پرسنل و ثبت چهره
+
+function AdminEnroll({ onExit }: { onExit: () => void }) {
+  const user = useAuth((s) => s.user)
+  const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<Employee | null>(null)
+  const [fpSelected, setFpSelected] = useState<Employee | null>(null)
+
+  const list = useQuery({
+    queryKey: ['kiosk-admin-employees', search],
+    queryFn: async () =>
+      (
+        await api.get<Page<Employee>>('/employees', {
+          params: { search: search || undefined, page_size: 30 },
+        })
+      ).data,
+  })
+
+  return (
+    <div className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col px-6 py-8">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h3 className="text-xl font-bold">ثبت چهره پرسنل</h3>
+          <p className="text-sm text-ink-400">
+            وارد شده به‌عنوان {user?.full_name ?? user?.username}
+            {' — '}
+            پرسنل را انتخاب کنید و نمونه‌های چهره را ثبت کنید
+          </p>
+        </div>
+        <button onClick={onExit} className="btn bg-white/10 px-4 py-2.5 text-white hover:bg-white/20">
+          <ShieldOff size={16} />
+          پایان و بازگشت
+        </button>
+      </div>
+
+      <div className="relative mb-4">
+        <Search
+          size={16}
+          className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-ink-500"
+        />
+        <input
+          className="input ps-10 bg-ink-800 text-white placeholder:text-ink-500"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="جستجوی نام یا کد پرسنلی…"
+          autoFocus
+        />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl bg-ink-800/60">
+        {list.isLoading ? (
+          <div className="py-10 text-center text-sm text-ink-400">در حال بارگذاری…</div>
+        ) : !list.data?.items.length ? (
+          <div className="py-10 text-center text-sm text-ink-400">پرسنلی پیدا نشد</div>
+        ) : (
+          <ul className="divide-y divide-white/10">
+            {list.data.items.map((emp) => (
+              <li key={emp.id} className="flex items-center gap-1 px-2 py-1">
+                <button
+                  onClick={() => setSelected(emp)}
+                  className="flex flex-1 items-center gap-3 rounded-xl px-2 py-2.5 text-start transition hover:bg-white/5"
+                >
+                  <div className="grid size-10 shrink-0 place-items-center rounded-full bg-white/10">
+                    <UserIcon size={18} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{emp.full_name}</p>
+                    <p className="text-xs text-ink-400">
+                      کد پرسنلی: {toPersianDigits(emp.personnel_code)}
+                      {emp.department_name ? ` — ${emp.department_name}` : ''}
+                    </p>
+                  </div>
+                  <span
+                    className={clsx(
+                      'badge shrink-0',
+                      emp.face_enrolled
+                        ? 'bg-emerald-500/15 text-emerald-300'
+                        : 'bg-amber-500/15 text-amber-300',
+                    )}
+                  >
+                    {emp.face_enrolled ? <CheckCircle2 size={13} /> : <ScanFace size={13} />}
+                    {toPersianDigits(emp.face_count)} نمونه
+                  </span>
+                </button>
+                <button
+                  onClick={() => setFpSelected(emp)}
+                  title="ثبت اثر انگشت"
+                  className={clsx(
+                    'badge shrink-0 transition hover:brightness-110',
+                    emp.has_fingerprint
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : 'bg-white/10 text-ink-300',
+                  )}
+                >
+                  <Fingerprint size={13} />
+                  {emp.has_fingerprint ? 'ثبت شده' : 'ثبت انگشت'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <FaceEnrollModal employee={selected} open={!!selected} onClose={() => setSelected(null)} />
+      <FingerprintEnrollModal
+        employee={fpSelected}
+        open={!!fpSelected}
+        onClose={() => setFpSelected(null)}
+      />
     </div>
   )
 }

@@ -21,8 +21,9 @@ from app.schemas.employee import (
     FaceEnrollRequest,
     FaceGallery,
     FaceOut,
+    PinVerifyRequest,
 )
-from app.services import face_service
+from app.services import face_service, fingerprint_service
 
 router = APIRouter()
 
@@ -46,6 +47,7 @@ def to_out(emp: Employee) -> EmployeeOut:
         shift_name=emp.shift.name if emp.shift else None,
         face_count=sum(1 for f in emp.faces if f.is_active),
         has_pin=bool(emp.pin_hash),
+        has_fingerprint=emp.fingerprint_template is not None,
     )
 
 
@@ -54,6 +56,7 @@ def _base_query():
         selectinload(Employee.department),
         selectinload(Employee.shift),
         selectinload(Employee.faces),
+        selectinload(Employee.fingerprint_template),
     )
 
 
@@ -273,10 +276,19 @@ def delete_face(employee_id: int, face_id: int, db: DbSession, _: ManagerUser) -
     return Message(detail="نمونه چهره حذف شد")
 
 
+@router.delete("/{employee_id}/fingerprint", response_model=Message, summary="حذف ثبت‌نام اثر انگشت")
+def delete_fingerprint(employee_id: int, db: DbSession, _: ManagerUser) -> Message:
+    get_or_404(db, employee_id)
+    fingerprint_service.delete_employee_fingerprint(db, employee_id)
+    return Message(detail="ثبت‌نام اثر انگشت حذف شد؛ در همگام‌سازی بعدی از همه دستگاه‌ها پاک می‌شود")
+
+
 @router.post("/{employee_id}/verify-pin", response_model=Message, summary="بررسی رمز پشتیبان")
-def verify_pin(employee_id: int, pin: str, db: DbSession, _: AnyUser) -> Message:
+def verify_pin(
+    employee_id: int, payload: PinVerifyRequest, db: DbSession, _: AnyUser
+) -> Message:
     emp = get_or_404(db, employee_id)
-    if not emp.pin_hash or not verify_password(pin, emp.pin_hash):
+    if not emp.pin_hash or not verify_password(payload.pin, emp.pin_hash):
         raise HTTPException(status_code=401, detail="رمز پشتیبان اشتباه است")
     return Message(detail="رمز تأیید شد")
 

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentDevice, DbSession
 from app.core.config import settings
 from app.core.jalali import fmt_time, jalali_long, now_utc, to_tehran
+from app.core.rate_limit import ensure_not_locked, note_failure, note_success
 from app.core.security import verify_password
 from app.models.employee import Employee
 from app.models.enums import PunchMethod
@@ -26,10 +27,11 @@ from app.schemas.attendance import (
     PunchBatch,
     PunchBatchResult,
     PunchIn,
+    PunchPinRequest,
     PunchResult,
 )
 from app.schemas.employee import FaceGallery
-from app.services import attendance_service, face_service
+from app.services import attendance_service, face_service, settings_service
 
 router = APIRouter()
 
@@ -38,6 +40,7 @@ router = APIRouter()
 def handshake(device: CurrentDevice, db: DbSession) -> dict:
     now = now_utc()
     local = to_tehran(now)
+    auth_methods = settings_service.get_auth_methods(db)
     return {
         "device": {
             "id": device.id,
@@ -56,6 +59,9 @@ def handshake(device: CurrentDevice, db: DbSession) -> dict:
             "require_liveness": settings.REQUIRE_LIVENESS,
             "liveness_turn_threshold": settings.LIVENESS_TURN_THRESHOLD,
             "liveness_timeout_seconds": settings.LIVENESS_TIMEOUT_SECONDS,
+            "face_enabled": auth_methods.face_enabled,
+            "fingerprint_enabled": auth_methods.fingerprint_enabled,
+            "pin_enabled": auth_methods.pin_enabled,
         },
     }
 
@@ -125,6 +131,10 @@ def identify(payload: KioskIdentifyRequest, device: CurrentDevice, db: DbSession
 
 @router.post("/punch", response_model=PunchResult, summary="ثبت یک تردد از تبلت")
 def punch(payload: PunchIn, device: CurrentDevice, db: DbSession) -> PunchResult:
+    method = payload.method or PunchMethod.FACE.value
+    if method == PunchMethod.FACE.value and not settings_service.get_auth_methods(db).face_enabled:
+        raise HTTPException(status_code=403, detail="تشخیص چهره غیرفعال است")
+
     emp = attendance_service.find_employee(
         db, employee_id=payload.employee_id, personnel_code=payload.personnel_code
     )
@@ -145,7 +155,7 @@ def punch(payload: PunchIn, device: CurrentDevice, db: DbSession) -> PunchResult
             employee=emp,
             kind=payload.kind,
             happened_at=payload.happened_at,
-            method=payload.method or PunchMethod.FACE.value,
+            method=method,
             device_id=device.id,
             confidence=payload.confidence,
             client_uuid=payload.client_uuid,
@@ -164,20 +174,29 @@ def punch(payload: PunchIn, device: CurrentDevice, db: DbSession) -> PunchResult
 
 @router.post("/punch/pin", response_model=PunchResult, summary="ثبت تردد با کد پرسنلی و رمز")
 def punch_with_pin(
-    personnel_code: str, pin: str, device: CurrentDevice, db: DbSession, kind: str | None = None
+    payload: PunchPinRequest, device: CurrentDevice, db: DbSession
 ) -> PunchResult:
     """راه پشتیبان وقتی دوربین یا تشخیص چهره در دسترس نیست."""
-    emp = attendance_service.find_employee(db, personnel_code=personnel_code)
+    if not settings_service.get_auth_methods(db).pin_enabled:
+        raise HTTPException(status_code=403, detail="ثبت تردد با کد پرسنلی غیرفعال است")
+
+    rate_key = f"pin:{device.id}:{payload.personnel_code}"
+    ensure_not_locked(rate_key)
+
+    emp = attendance_service.find_employee(db, personnel_code=payload.personnel_code)
     if emp is None or not emp.is_active:
+        note_failure(rate_key)
         raise HTTPException(status_code=404, detail="کد پرسنلی یافت نشد")
-    if not emp.pin_hash or not verify_password(pin, emp.pin_hash):
+    if not emp.pin_hash or not verify_password(payload.pin, emp.pin_hash):
+        note_failure(rate_key)
         raise HTTPException(status_code=401, detail="رمز پشتیبان اشتباه است")
+    note_success(rate_key)
 
     try:
         result = attendance_service.record_punch(
             db,
             employee=emp,
-            kind=kind,
+            kind=payload.kind,
             method=PunchMethod.PIN.value,
             device_id=device.id,
         )

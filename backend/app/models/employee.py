@@ -35,6 +35,12 @@ class Employee(Base, TimestampMixin):
     punches = relationship("AttendanceRecord", back_populates="employee", cascade="all, delete-orphan")
     leaves = relationship("LeaveRequest", back_populates="employee", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="employee", cascade="all, delete-orphan")
+    fingerprint_template = relationship(
+        "FingerprintTemplate", back_populates="employee", uselist=False, cascade="all, delete-orphan"
+    )
+    fingerprint_slots = relationship(
+        "FingerprintSlot", back_populates="employee", cascade="all, delete-orphan"
+    )
 
     @property
     def full_name(self) -> str:

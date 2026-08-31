@@ -6,9 +6,12 @@ import {
   Clock,
   CloudOff,
   Copy,
+  Fingerprint,
   KeyRound,
   Plus,
   RefreshCw,
+  ScanFace,
+  ShieldCheck,
   Tablet,
   Trash2,
   UserCog,
@@ -16,7 +19,7 @@ import {
 import clsx from 'clsx'
 import { api, errorMessage } from '../lib/api'
 import { isAdmin, ROLE_LABELS, useAuth } from '../lib/auth'
-import type { Department, Device, Holiday, Shift, User } from '../lib/types'
+import type { AuthMethods, Department, Device, Holiday, Shift, User } from '../lib/types'
 import { toJalaliString, toPersianDigits, WEEKDAYS_FA } from '../lib/jalali'
 import {
   Card,
@@ -31,13 +34,14 @@ import {
 } from '../components/ui'
 import { JalaliDatePicker } from '../components/JalaliDatePicker'
 
-type Tab = 'departments' | 'shifts' | 'holidays' | 'devices' | 'users' | 'account'
+type Tab = 'departments' | 'shifts' | 'holidays' | 'devices' | 'auth-methods' | 'users' | 'account'
 
 const TABS: { key: Tab; label: string; icon: typeof Building2; adminOnly?: boolean }[] = [
   { key: 'departments', label: 'واحدها', icon: Building2 },
   { key: 'shifts', label: 'شیفت‌ها', icon: Clock },
   { key: 'holidays', label: 'تعطیلات رسمی', icon: CalendarOff },
   { key: 'devices', label: 'دستگاه‌ها', icon: Tablet, adminOnly: true },
+  { key: 'auth-methods', label: 'روش‌های تأیید هویت', icon: ShieldCheck, adminOnly: true },
   { key: 'users', label: 'کاربران پنل', icon: UserCog, adminOnly: true },
   { key: 'account', label: 'حساب من', icon: KeyRound },
 ]
@@ -72,6 +76,7 @@ export default function Settings() {
       {tab === 'shifts' && <ShiftsTab />}
       {tab === 'holidays' && <HolidaysTab />}
       {tab === 'devices' && admin && <DevicesTab />}
+      {tab === 'auth-methods' && admin && <AuthMethodsTab />}
       {tab === 'users' && admin && <UsersTab />}
       {tab === 'account' && <AccountTab />}
     </div>
@@ -567,7 +572,8 @@ function DevicesTab() {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
-  const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
+  const [kind, setKind] = useState<'tablet' | 'fingerprint'>('tablet')
+  const [newKey, setNewKey] = useState<{ name: string; key: string; kind: string } | null>(null)
   const [deleting, setDeleting] = useState<Device | null>(null)
 
   const list = useQuery({
@@ -576,12 +582,13 @@ function DevicesTab() {
   })
 
   const save = useMutation({
-    mutationFn: async () => (await api.post<Device>('/devices', { name, location })).data,
+    mutationFn: async () => (await api.post<Device>('/devices', { name, location, kind })).data,
     onSuccess: (data) => {
       setOpen(false)
       setName('')
       setLocation('')
-      setNewKey({ name: data.name, key: data.api_key! })
+      setKind('tablet')
+      setNewKey({ name: data.name, key: data.api_key!, kind: data.kind })
       void qc.invalidateQueries({ queryKey: ['devices'] })
     },
     onError: (err) => toast.error(errorMessage(err)),
@@ -590,7 +597,7 @@ function DevicesTab() {
   const rotate = useMutation({
     mutationFn: async (id: number) => (await api.post<Device>(`/devices/${id}/rotate-key`)).data,
     onSuccess: (data) => {
-      setNewKey({ name: data.name, key: data.api_key! })
+      setNewKey({ name: data.name, key: data.api_key!, kind: data.kind })
       void qc.invalidateQueries({ queryKey: ['devices'] })
     },
     onError: (err) => toast.error(errorMessage(err)),
@@ -638,10 +645,15 @@ function DevicesTab() {
                     d.is_active ? 'bg-emerald-50 text-emerald-600' : 'bg-ink-100 text-ink-400',
                   )}
                 >
-                  <Tablet size={18} />
+                  {d.kind === 'fingerprint' ? <Fingerprint size={18} /> : <Tablet size={18} />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-ink-800">{d.name}</p>
+                  <p className="font-medium text-ink-800">
+                    {d.name}
+                    <span className="badge mr-2 bg-ink-100 text-ink-600">
+                      {d.kind === 'fingerprint' ? 'اثر انگشت' : 'تبلت'}
+                    </span>
+                  </p>
                   <p className="text-xs text-ink-400">{d.location ?? 'بدون محل'}</p>
                 </div>
                 <div className="flex gap-1">
@@ -714,6 +726,16 @@ function DevicesTab() {
         }
       >
         <div className="grid gap-4">
+          <Field label="نوع دستگاه" required>
+            <select
+              className="input"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as 'tablet' | 'fingerprint')}
+            >
+              <option value="tablet">تبلت ورودی (دوربین)</option>
+              <option value="fingerprint">ماژول اثر انگشت (ESP32)</option>
+            </select>
+          </Field>
           <Field label="نام دستگاه" required>
             <input
               className="input"
@@ -746,8 +768,14 @@ function DevicesTab() {
         }
       >
         <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-6 text-amber-800">
-          این کلید فقط همین یک‌بار نمایش داده می‌شود. آن را در صفحه راه‌اندازی تبلت
-          (<span dir="ltr">/kiosk</span>) وارد کنید.
+          {newKey?.kind === 'fingerprint' ? (
+            <>این کلید فقط همین یک‌بار نمایش داده می‌شود. آن را هنگام راه‌اندازی اولیه ماژول ESP32 وارد کنید.</>
+          ) : (
+            <>
+              این کلید فقط همین یک‌بار نمایش داده می‌شود. آن را در صفحه راه‌اندازی تبلت
+              (<span dir="ltr">/kiosk</span>) وارد کنید.
+            </>
+          )}
         </p>
         <div className="flex items-center gap-2 rounded-xl bg-ink-900 p-3">
           <code dir="ltr" className="flex-1 break-all font-mono text-xs text-emerald-300">
@@ -772,6 +800,107 @@ function DevicesTab() {
         onConfirm={() => deleting && remove.mutate(deleting.id)}
         onCancel={() => setDeleting(null)}
       />
+    </Card>
+  )
+}
+
+// -------------------------------------------------------- روش‌های تأیید هویت
+
+function AuthMethodsTab() {
+  const toast = useToast()
+  const qc = useQueryClient()
+
+  const query = useQuery({
+    queryKey: ['auth-methods'],
+    queryFn: async () => (await api.get<AuthMethods>('/settings/auth-methods')).data,
+  })
+
+  const update = useMutation({
+    mutationFn: async (patch: Partial<AuthMethods>) =>
+      (await api.patch<AuthMethods>('/settings/auth-methods', patch)).data,
+    onSuccess: (data) => {
+      qc.setQueryData(['auth-methods'], data)
+      toast.success('تنظیمات ذخیره شد')
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  })
+
+  if (query.isLoading || !query.data) return <LoadingBlock />
+
+  const methods = query.data
+  const enabledCount = [methods.face_enabled, methods.fingerprint_enabled, methods.pin_enabled].filter(
+    Boolean,
+  ).length
+
+  const items: { key: keyof AuthMethods; label: string; hint: string; icon: typeof ScanFace }[] = [
+    {
+      key: 'face_enabled',
+      label: 'تشخیص چهره',
+      hint: 'تشخیص خودکار با دوربین تبلت',
+      icon: ScanFace,
+    },
+    {
+      key: 'fingerprint_enabled',
+      label: 'اثر انگشت',
+      hint: 'ماژول ESP32 کنار درب',
+      icon: Fingerprint,
+    },
+    {
+      key: 'pin_enabled',
+      label: 'کد پرسنلی',
+      hint: 'کد پرسنلی + رمز پشتیبان',
+      icon: KeyRound,
+    },
+  ]
+
+  return (
+    <Card className="max-w-2xl">
+      <SectionTitle
+        title="روش‌های مجاز تأیید هویت تردد"
+        subtitle="تعیین کنید پرسنل با کدام روش‌ها می‌توانند تردد ثبت کنند — هر ترکیبی مجاز است، به شرط اینکه حداقل یکی فعال بماند"
+      />
+      <div className="grid gap-3">
+        {items.map(({ key, label, hint, icon: Icon }) => {
+          const checked = methods[key]
+          const lastOne = checked && enabledCount === 1
+          return (
+            <label
+              key={key}
+              className={clsx(
+                'flex items-center gap-3.5 rounded-xl border p-4 transition',
+                checked ? 'border-brand-300 bg-brand-50' : 'border-ink-200',
+                lastOne ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:bg-ink-50',
+              )}
+            >
+              <div
+                className={clsx(
+                  'grid size-10 shrink-0 place-items-center rounded-xl',
+                  checked ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-400',
+                )}
+              >
+                <Icon size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-ink-800">{label}</p>
+                <p className="text-xs text-ink-400">{hint}</p>
+              </div>
+              <input
+                type="checkbox"
+                className="size-5 accent-brand-600"
+                checked={checked}
+                disabled={lastOne || update.isPending}
+                title={lastOne ? 'حداقل یک روش باید فعال بماند' : undefined}
+                onChange={(e) => update.mutate({ [key]: e.target.checked })}
+              />
+            </label>
+          )
+        })}
+      </div>
+      {enabledCount === 1 && (
+        <p className="mt-4 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-6 text-amber-800">
+          فقط یک روش فعال است؛ برای غیرفعال کردنش، ابتدا روش دیگری را فعال کنید.
+        </p>
+      )}
     </Card>
   )
 }

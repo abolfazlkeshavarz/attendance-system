@@ -20,10 +20,23 @@ class PunchKind(StrEnum):
 
 
 class PunchMethod(StrEnum):
-    FACE = "face"            # تشخیص چهره
-    PIN = "pin"              # کد پرسنلی + رمز
-    MANUAL = "manual"        # ثبت دستی توسط مدیر
-    ADMIN_FIX = "admin_fix"  # اصلاح توسط مدیر
+    FACE = "face"                  # تشخیص چهره
+    FINGERPRINT = "fingerprint"    # اثر انگشت (ماژول UART روی ESP32)
+    PIN = "pin"                    # کد پرسنلی + رمز
+    MANUAL = "manual"              # ثبت دستی توسط مدیر
+    ADMIN_FIX = "admin_fix"        # اصلاح توسط مدیر
+
+
+class FingerprintJobStatus(StrEnum):
+    PENDING = "pending"      # منتظر دستگاه است
+    DONE = "done"            # با موفقیت ثبت شد
+    FAILED = "failed"        # ثبت‌نام روی دستگاه شکست خورد
+    CANCELLED = "cancelled"  # توسط مدیر لغو شد
+
+
+class DeviceKind(StrEnum):
+    TABLET = "tablet"              # تبلت ورودی (دوربین + احتمالاً کد پرسنلی)
+    FINGERPRINT = "fingerprint"    # ماژول UART روی ESP32
 
 
 class DayStatus(StrEnum):
@@ -74,15 +87,18 @@ class TaskRecurrence(StrEnum):
 FA_LABELS: dict[str, str] = {
     "admin": "مدیر ارشد", "manager": "سرپرست", "viewer": "ناظر",
     "in": "ورود", "out": "خروج",
-    "face": "تشخیص چهره", "pin": "کد پرسنلی", "manual": "ثبت دستی", "admin_fix": "اصلاح مدیر",
+    "face": "تشخیص چهره", "fingerprint": "اثر انگشت", "pin": "کد پرسنلی",
+    "manual": "ثبت دستی", "admin_fix": "اصلاح مدیر",
     "present": "حاضر", "absent": "غایب", "leave": "مرخصی", "mission": "مأموریت",
     "holiday": "تعطیل رسمی", "weekend": "تعطیل هفتگی", "incomplete": "ناقص",
     "daily": "روزانه", "hourly": "ساعتی", "sick": "استعلاجی", "unpaid": "بدون حقوق",
     "pending": "در انتظار تأیید", "approved": "تأیید شده", "rejected": "رد شده",
+    "failed": "شکست خورد",
     "todo": "انجام نشده", "in_progress": "در حال انجام", "done": "انجام شد",
     "cancelled": "لغو شده",
     "low": "کم", "normal": "عادی", "high": "زیاد", "urgent": "فوری",
     "none": "بدون تکرار", "weekly": "هفتگی", "monthly": "ماهانه",
+    "tablet": "تبلت ورودی",
 }
 
 

@@ -6,6 +6,7 @@ from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
+from app.models.enums import DeviceKind
 
 
 class Device(Base, TimestampMixin):
@@ -15,6 +16,7 @@ class Device(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)          # مثلاً «درب اصلی»
+    kind: Mapped[str] = mapped_column(String(16), default=DeviceKind.TABLET.value, nullable=False)
     device_uid: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     api_key_hash: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
     location: Mapped[str | None] = mapped_column(String(255))
@@ -25,3 +27,6 @@ class Device(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     punches = relationship("AttendanceRecord", back_populates="device")
+    fingerprint_slots = relationship(
+        "FingerprintSlot", back_populates="device", cascade="all, delete-orphan"
+    )

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.api.deps import AdminUser, AnyUser, DbSession
 from app.core.security import generate_api_key, hash_api_key
 from app.models.device import Device
+from app.models.enums import DeviceKind
 from app.schemas.attendance import DeviceCreate, DeviceOut, DeviceWithKey
 from app.schemas.common import Message
 
@@ -22,10 +23,13 @@ def list_devices(db: DbSession, _: AnyUser) -> list[Device]:
 
 @router.post("", response_model=DeviceWithKey, status_code=201, summary="ثبت دستگاه جدید")
 def create_device(payload: DeviceCreate, db: DbSession, _: AdminUser) -> DeviceWithKey:
-    """کلید دستگاه فقط همین یک‌بار نمایش داده می‌شود؛ آن را در تبلت وارد کنید."""
+    """کلید دستگاه فقط همین یک‌بار نمایش داده می‌شود؛ آن را در تبلت/ماژول وارد کنید."""
+    if payload.kind not in {k.value for k in DeviceKind}:
+        raise HTTPException(status_code=400, detail="نوع دستگاه معتبر نیست")
     raw_key = generate_api_key()
     device = Device(
         name=payload.name.strip(),
+        kind=payload.kind,
         location=payload.location,
         device_uid=uuid.uuid4().hex[:16],
         api_key_hash=hash_api_key(raw_key),

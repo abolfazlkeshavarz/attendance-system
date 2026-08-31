@@ -26,6 +26,9 @@ export interface KioskSettings {
   require_liveness: boolean
   liveness_turn_threshold: number
   liveness_timeout_seconds: number
+  face_enabled: boolean
+  fingerprint_enabled: boolean
+  pin_enabled: boolean
 }
 
 const FALLBACK_SETTINGS: KioskSettings = {
@@ -34,6 +37,9 @@ const FALLBACK_SETTINGS: KioskSettings = {
   require_liveness: true,
   liveness_turn_threshold: 0.06,
   liveness_timeout_seconds: 12,
+  face_enabled: true,
+  fingerprint_enabled: false,
+  pin_enabled: true,
 }
 
 /**

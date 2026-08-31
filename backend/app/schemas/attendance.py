@@ -108,6 +108,18 @@ class AttendanceUpdate(BaseModel):
     note: str | None = None
 
 
+class PunchPinRequest(BaseModel):
+    """ثبت تردد با کد پرسنلی و رمز پشتیبان — در بدنه درخواست، نه در URL.
+
+    اگر این‌ها Query param بودند، سرورهای واسط و لاگ nginx رمز پشتیبان پرسنل
+    را به‌صورت متن ساده در URL ثبت می‌کردند.
+    """
+
+    personnel_code: str
+    pin: str
+    kind: str | None = None
+
+
 class KioskIdentifyRequest(BaseModel):
     """در حالت آنلاین، تبلت می‌تواند تطبیق را به سرور بسپارد."""
 
@@ -149,11 +161,13 @@ class TodayStatus(BaseModel):
 class DeviceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     location: str | None = None
+    kind: str = "tablet"
 
 
 class DeviceOut(ORMModel):
     id: int
     name: str
+    kind: str
     device_uid: str
     location: str | None = None
     last_seen_at: datetime | None = None

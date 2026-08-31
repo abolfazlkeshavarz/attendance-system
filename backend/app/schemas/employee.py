@@ -105,6 +105,7 @@ class EmployeeOut(ORMModel):
     shift_name: str | None = None
     face_count: int = 0
     has_pin: bool = False
+    has_fingerprint: bool = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -120,6 +121,10 @@ class EmployeeOut(ORMModel):
     @property
     def face_enrolled(self) -> bool:
         return self.face_count > 0
+
+
+class PinVerifyRequest(BaseModel):
+    pin: str
 
 
 class FaceEnrollRequest(BaseModel):

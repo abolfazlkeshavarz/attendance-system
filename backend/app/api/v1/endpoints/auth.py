@@ -1,11 +1,12 @@
 """ورود به پنل مدیریت و مدیریت کاربران."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
 from app.core.config import settings
+from app.core.rate_limit import ensure_not_locked, note_failure, note_success
 from app.core.security import (
     create_access_token,
     create_media_token,
@@ -48,17 +49,21 @@ def _set_media_cookie(response: Response, user_id: int) -> None:
 
 
 @router.post("/login", response_model=TokenPair, summary="ورود مدیر")
-def login(payload: LoginRequest, db: DbSession, response: Response) -> TokenPair:
-    user = db.execute(
-        select(User).where(User.username == payload.username.strip().lower())
-    ).scalar_one_or_none()
+def login(payload: LoginRequest, db: DbSession, response: Response, request: Request) -> TokenPair:
+    username = payload.username.strip().lower()
+    rate_key = f"login:{request.client.host if request.client else 'unknown'}:{username}"
+    ensure_not_locked(rate_key)
+
+    user = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
     if user is None or not verify_password(payload.password, user.hashed_password):
+        note_failure(rate_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="نام کاربری یا رمز عبور اشتباه است",
         )
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="حساب کاربری غیرفعال است")
+    note_success(rate_key)
     _set_media_cookie(response, user.id)
     return TokenPair(
         access_token=create_access_token(user.id, user.role),

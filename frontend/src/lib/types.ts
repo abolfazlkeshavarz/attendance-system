@@ -65,6 +65,7 @@ export interface Employee {
   face_count: number
   face_enrolled: boolean
   has_pin: boolean
+  has_fingerprint: boolean
 }
 
 export interface FaceSample {
@@ -239,6 +240,7 @@ export interface Leave {
 export interface Device {
   id: number
   name: string
+  kind: 'tablet' | 'fingerprint'
   device_uid: string
   location?: string | null
   last_seen_at?: string | null
@@ -265,6 +267,24 @@ export interface FaceGallery {
   version: string
   generated_at: string
   items: GalleryItem[]
+}
+
+export interface AuthMethods {
+  face_enabled: boolean
+  fingerprint_enabled: boolean
+  pin_enabled: boolean
+}
+
+export interface FingerprintEnrollJob {
+  id: number
+  employee_id: number
+  device_id: number
+  status: 'pending' | 'done' | 'failed' | 'cancelled'
+  error_message?: string | null
+  created_at: string
+  completed_at?: string | null
+  employee_name?: string | null
+  device_name?: string | null
 }
 
 export interface TodayStatus {

@@ -38,9 +38,11 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="API سامانه حضور و غیاب پرسنل با تشخیص چهره، مدیریت وظایف و گزارش‌گیری",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    # مستندات Swagger/ReDoc فقط در محیط توسعه فعال است؛ در تولید افشای نقشه کامل
+    # API (از جمله مسیرهای مدیریتی) به هر کاربر ناشناس لازم نیست.
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
