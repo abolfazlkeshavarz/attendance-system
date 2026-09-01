@@ -58,7 +58,7 @@ services:
       - "443:443"
     volumes:
       - certbot_conf:/etc/letsencrypt:ro
-      - certbot_www:/var/www/certbot:ro
+      - certbot_www:/var/www/certbot
     # هر ۶ ساعت پیکربندی را دوباره می‌خواند تا گواهی تمدیدشده اعمال شود.
     #
     # صدا زدن صریح /docker-entrypoint.sh لازم است و اضافی نیست: اسکریپت ورودیِ
