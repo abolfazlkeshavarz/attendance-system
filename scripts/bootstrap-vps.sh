@@ -1,52 +1,53 @@
 #!/usr/bin/env bash
 #
-# استقرار کامل از صفر روی یک VPS اوبونتو/دبیان کاملاً تازه: نصب Docker،
-# تنظیم آینه‌های داخلی (اختیاری، برای سرورهای ایران)، ساخت .env، بالا آوردن
-# سامانه و گرفتن گواهی SSL — همه در یک اجرا.
+# Full zero-to-deployed setup on a brand-new Ubuntu/Debian VPS: installs
+# Docker, configures internal mirrors (optional, for Iranian servers),
+# creates .env, brings the system up, and obtains an SSL certificate —
+# all in one run.
 #
-# اجرا (از ریشه پروژه، بعد از git clone):
+# Usage (from the project root, after git clone):
 #   ./scripts/bootstrap-vps.sh
 #
-# می‌توانید دامنه و ایمیل را از قبل بدهید تا چیزی پرسیده نشود:
+# You can supply the domain and email up front so nothing is prompted:
 #   DOMAIN=hozur.example.com LETSENCRYPT_EMAIL=admin@example.com ./scripts/bootstrap-vps.sh
 #
-# برای دور زدن فیلترینگ/کندی روی سرورهای ایران (آینه‌های apt و docker):
+# To work around filtering/throttling on Iranian servers (apt and docker mirrors):
 #   MIRRORS=1 ./scripts/bootstrap-vps.sh
 #
-# اسکریپت خودش با sudo دوباره اجرا می‌شود؛ نیازی به «sudo» گذاشتن جلوی آن نیست.
+# The script re-execs itself with sudo; you don't need to put "sudo" in front of it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# ------------------------------------------------------------- ارتقا به root
+# ------------------------------------------------------------- elevate to root
 if [[ "$(id -u)" != "0" ]]; then
-  echo "==> نیاز به دسترسی root برای نصب Docker؛ با sudo دوباره اجرا می‌شود"
+  echo "==> Root access is required to install Docker; re-running with sudo"
   exec sudo -E bash "$0" "$@"
 fi
 
 REAL_USER="${SUDO_USER:-root}"
 
 if ! command -v apt-get >/dev/null 2>&1; then
-  echo "این اسکریپت فقط برای اوبونتو/دبیان (apt) نوشته شده است." >&2
+  echo "This script is written only for Ubuntu/Debian (apt)." >&2
   exit 1
 fi
 
-# --------------------------------------------------------- آینه apt (اختیاری)
-# اگر لازم است، باید پیش از هر apt-get دیگری اجرا شود.
+# --------------------------------------------------------- apt mirror (optional)
+# If needed, this must run before any other apt-get calls.
 if [[ "${MIRRORS:-0}" == "1" ]]; then
-  echo "==> تنظیم آینه apt"
+  echo "==> Setting apt mirror"
   make mirrors-apt
 fi
 
-# --------------------------------------------------------- بسته‌های پایه
-echo "==> نصب بسته‌های پایه"
+# --------------------------------------------------------- base packages
+echo "==> Installing base packages"
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg make openssl git
 
 # --------------------------------------------------------------- Docker Engine
 if ! command -v docker >/dev/null 2>&1; then
-  echo "==> نصب Docker Engine"
+  echo "==> Installing Docker Engine"
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
@@ -57,40 +58,40 @@ if ! command -v docker >/dev/null 2>&1; then
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
-  echo "    Docker نصب شد."
+  echo "    Docker installed."
 else
-  echo "==> Docker از قبل نصب است"
+  echo "==> Docker is already installed"
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
-  echo "==> افزونه Docker Compose v2 پیدا نشد؛ نصب می‌شود"
+  echo "==> Docker Compose v2 plugin not found; installing"
   make install-compose
 fi
 
 if [[ "$REAL_USER" != "root" ]] && ! id -nG "$REAL_USER" | grep -qw docker; then
-  echo "==> افزودن کاربر $REAL_USER به گروه docker"
+  echo "==> Adding user $REAL_USER to the docker group"
   usermod -aG docker "$REAL_USER"
-  echo "    توجه: برای اجرای docker بدون sudo باید دوباره وارد شوید (logout/login)."
+  echo "    Note: you must log out/in again to run docker without sudo."
 fi
 
-# ------------------------------------------------------- آینه docker (اختیاری)
+# ------------------------------------------------------- docker mirror (optional)
 if [[ "${MIRRORS:-0}" == "1" ]]; then
-  echo "==> تنظیم آینه دریافت ایمیج داکر"
+  echo "==> Setting Docker image pull mirror"
   make mirrors-docker
 fi
 
-# --------------------------------------------------------------- دامنه و ایمیل
+# --------------------------------------------------------------- domain and email
 if [[ -z "${DOMAIN:-}" ]]; then
-  read -r -p "دامنه‌ای که رکورد A آن به IP این سرور اشاره می‌کند: " DOMAIN
+  read -r -p "Domain whose A record points to this server's IP: " DOMAIN
 fi
 if [[ -z "${LETSENCRYPT_EMAIL:-}" ]]; then
-  read -r -p "ایمیل برای هشدار انقضای گواهی Let's Encrypt: " LETSENCRYPT_EMAIL
+  read -r -p "Email for Let's Encrypt expiry warnings: " LETSENCRYPT_EMAIL
 fi
-: "${DOMAIN:?دامنه لازم است}"
-: "${LETSENCRYPT_EMAIL:?ایمیل لازم است}"
+: "${DOMAIN:?DOMAIN is required}"
+: "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL is required}"
 
 # ------------------------------------------------------------------- .env
-echo "==> ساخت فایل .env"
+echo "==> Creating .env file"
 make setup
 sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
 sed -i "s|^LETSENCRYPT_EMAIL=.*|LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}|" .env
@@ -102,14 +103,14 @@ if [[ "$REAL_USER" != "root" ]]; then
   chown "$REAL_USER":"$REAL_USER" .env
 fi
 
-# --------------------------------------------------------------- استقرار
-echo "==> ساخت ایمیج‌ها و بالا آوردن سامانه"
+# --------------------------------------------------------------- deploy
+echo "==> Building images and bringing the system up"
 make deploy
 
-echo "==> گرفتن گواهی SSL از Let's Encrypt"
+echo "==> Obtaining SSL certificate from Let's Encrypt"
 make ssl
 
 echo ""
-echo "سامانه با موفقیت روی https://${DOMAIN} بالا آمد."
-echo "پنل مدیریت و تبلت ورودی (kiosk) از همان آدرس در دسترس‌اند."
-echo "رمز اولیه مدیر در خروجی «make setup» بالاتر چاپ شده — یادداشتش کنید."
+echo "System is up successfully at https://${DOMAIN}"
+echo "The admin panel and kiosk check-in tablet page are both available at that address."
+echo "The initial admin password was printed above in the \"make setup\" output — write it down."
