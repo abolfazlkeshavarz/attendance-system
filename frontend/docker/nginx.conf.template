@@ -5,7 +5,7 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN};
+    server_name ${DOMAIN};  # This will be your attendance system domain
 
     # بررسی سلامت خود nginx (بدون هدایت، وگرنه healthcheck شکست می‌خورد)
     location = /healthz {
@@ -25,7 +25,7 @@ server {
     }
 }
 
-# ------------------------------------------------------------------ HTTPS
+# ------------------- HTTPS for attendance system
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
@@ -69,9 +69,6 @@ server {
     }
 
     # ------------------------------------------------- تصاویر چهره و ترددها
-    # مهم: این مسیر عمداً از سرور رد می‌شود و مستقیم از دیسک سرو نمی‌شود.
-    # کنترل دسترسی (کوکی HttpOnly) داخل FastAPI است؛ اگر nginx خودش فایل‌ها را
-    # بدهد، عکس چهره همه پرسنل عملاً عمومی می‌شود.
     location /static/ {
         proxy_pass http://${BACKEND_UPSTREAM};
         proxy_http_version 1.1;
@@ -119,39 +116,44 @@ server {
         try_files $uri $uri/ /index.html;
     }
 }
-#########
 
+# ==================== CHATTER PROJECT (chat.abolfazl.fun) ====================
+# HTTP for chatter
 server {
     listen 80;
     server_name chat.abolfazl.fun;
-    location / { return 301 https://$host$request_uri; }
+    
+    # Use the SAME webroot for certbot challenges
     location /.well-known/acme-challenge/ {
-        root /var/www/certbot;   # match whatever webroot that project's
-                                    # certbot already uses
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+    
+    location / {
+        return 301 https://$host$request_uri;
     }
 }
 
+# HTTPS for chatter
 server {
     listen 443 ssl;
     server_name chat.abolfazl.fun;
 
-    # Path to a certificate for chat.abolfazl.fun — see step 2 below.
     ssl_certificate     /etc/letsencrypt/live/chat.abolfazl.fun/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/chat.abolfazl.fun/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
 
     location / {
         proxy_pass http://127.0.0.1:8091;
         proxy_http_version 1.1;
-
-        # $host, not $http_host stripped of its port: Chatters checks
-        # that a request's Origin matches its Host, so this has to be
-        # exactly what the browser sees, or every request gets rejected.
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-
-        # Required for live messaging (WebSocket).
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 86400;
