@@ -266,7 +266,7 @@ bootstrap: ## Full zero-to-full deployment on a fresh VPS: install Docker + setu
 .PHONY: deploy
 deploy: check-env ## Build images and bring the whole system up
 	$(COMPOSE) build
-	$(COMPOSE) up -d
+	@. scripts/lib.sh; start_stack_safely
 	@echo ""
 	@echo "System is up. To get an SSL certificate: make ssl"
 	@$(COMPOSE) ps
@@ -338,7 +338,7 @@ ssl-info: ## Show certificate expiry date
 .PHONY: backup
 backup: check-env ## Back up the database and face photos
 	@mkdir -p $(BACKUP_DIR)
-	@set -a; . ./.env; set +a; \
+	@. scripts/lib.sh; load_env .env; \
 	$(COMPOSE) exec -T $(DB) pg_dump -U $$POSTGRES_USER $$POSTGRES_DB \
 		| gzip > $(BACKUP_DIR)/db-$(STAMP).sql.gz
 	@$(COMPOSE) run --rm -v $(PWD)/$(BACKUP_DIR):/backup \
@@ -352,7 +352,7 @@ restore: check-env ## Restore the database (FILE=backups/db-....sql.gz)
 	@test -f "$(FILE)" || { echo "File $(FILE) not found"; exit 1; }
 	@echo "Warning: the current database content will be replaced."
 	@read -r -p "Continue? [y/N] " r; [ "$$r" = "y" ] || exit 1
-	@set -a; . ./.env; set +a; \
+	@. scripts/lib.sh; load_env .env; \
 	gunzip -c "$(FILE)" | $(COMPOSE) exec -T $(DB) psql -U $$POSTGRES_USER -d $$POSTGRES_DB
 	@echo "Restore complete."
 
@@ -364,7 +364,7 @@ shell: ## Open a shell in the backend container
 
 .PHONY: dbshell
 dbshell: ## Open a psql shell
-	@set -a; . ./.env; set +a; \
+	@. scripts/lib.sh; load_env .env; \
 	$(COMPOSE) exec $(DB) psql -U $$POSTGRES_USER -d $$POSTGRES_DB
 
 .PHONY: seed-demo

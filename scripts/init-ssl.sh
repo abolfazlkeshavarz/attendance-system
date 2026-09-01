@@ -9,21 +9,33 @@
 # Solution: first generate a temporary self-signed certificate so nginx can
 # start, then have certbot obtain the real certificate and put it in place.
 #
-# Usage:  make ssl
+# By default this uses the HTTP-01 challenge, which requires the domain to
+# resolve directly to this server on port 80. If your domain instead points
+# to a CDN/proxy in front of this server (so certbot can't be reached on
+# port 80), use the DNS-01 challenge instead: certbot will print a TXT
+# record for you to add manually in your DNS provider's dashboard, then
+# pause and wait for you to confirm before continuing.
+#
+# Usage:
+#   make ssl                  # HTTP-01 challenge (default)
+#   make ssl CHALLENGE=dns    # DNS-01 challenge (manual TXT record)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [[ ! -f .env ]]; then
-  echo "Error: .env not found. Run \"make setup\" first." >&2
-  exit 1
-fi
-
 # shellcheck disable=SC1091
-set -a; source .env; set +a
+source scripts/lib.sh
+
+load_env .env || exit 1
 
 : "${DOMAIN:?Set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env}"
+
+CHALLENGE="${CHALLENGE:-http}"
+if [[ "$CHALLENGE" != "http" && "$CHALLENGE" != "dns" ]]; then
+  echo "Error: CHALLENGE must be \"http\" or \"dns\" (got \"${CHALLENGE}\")." >&2
+  exit 1
+fi
 
 STAGING_FLAG=""
 if [[ "${LETSENCRYPT_STAGING:-false}" == "true" ]]; then
@@ -51,9 +63,7 @@ docker compose run --rm --entrypoint "\
            -out ${CERT_PATH}/fullchain.pem \
            -subj \"/CN=${DOMAIN}\"'" certbot
 
-echo "==> Starting nginx"
-docker compose up -d web
-sleep 5
+start_stack_safely || exit 1
 
 echo "==> Removing the temporary certificate"
 docker compose run --rm --entrypoint "\

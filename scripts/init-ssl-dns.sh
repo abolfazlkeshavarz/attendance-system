@@ -21,13 +21,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [[ ! -f .env ]]; then
-  echo "Error: .env not found. Run \"make setup\" first." >&2
-  exit 1
-fi
-
 # shellcheck disable=SC1091
-set -a; source .env; set +a
+source scripts/lib.sh
+
+load_env .env || exit 1
 
 : "${DOMAIN:?Set DOMAIN in .env}"
 : "${LETSENCRYPT_EMAIL:?Set LETSENCRYPT_EMAIL in .env}"
@@ -50,9 +47,9 @@ if ! docker compose run --rm --entrypoint "test -f ${CERT_PATH}/fullchain.pem" c
              -keyout ${CERT_PATH}/privkey.pem \
              -out ${CERT_PATH}/fullchain.pem \
              -subj \"/CN=${DOMAIN}\"'" certbot
-  echo "==> Starting nginx"
-  docker compose up -d web
 fi
+
+start_stack_safely || exit 1
 
 echo "==> Removing any temporary/previous certificate for ${DOMAIN}"
 docker compose run --rm --entrypoint "\
