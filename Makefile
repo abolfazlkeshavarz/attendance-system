@@ -316,6 +316,10 @@ logs-web: ## Nginx logs
 ssl: check-env ## Get an SSL certificate from Let's Encrypt (first run)
 	@bash scripts/init-ssl.sh
 
+.PHONY: ssl-dns
+ssl-dns: check-env ## Get an SSL certificate via manual DNS-01 challenge (use if port 80 isn't reachable; does not auto-renew)
+	@bash scripts/init-ssl-dns.sh
+
 .PHONY: ssl-renew
 ssl-renew: ## Manually renew the certificate (auto-renewal is also enabled)
 	$(COMPOSE) run --rm certbot renew --webroot -w /var/www/certbot
