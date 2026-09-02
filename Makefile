@@ -63,7 +63,10 @@ setup: ## Create .env with random keys (first run)
 		echo ".env created with randomly generated keys."; \
 		echo "Initial admin password: $$adminpass"; \
 		echo ""; \
-		echo "Now set DOMAIN and LETSENCRYPT_EMAIL in .env, then run: make mirrors && make deploy"; \
+		echo "Now set DOMAIN and LETSENCRYPT_EMAIL in .env."; \
+		echo "If this VPS already runs another project, also change APP_HTTP_PORT"; \
+		echo "to a number not used by any of them (default: 8081)."; \
+		echo "Then run: make mirrors && make deploy"; \
 	fi
 
 .PHONY: check-env
@@ -266,9 +269,10 @@ bootstrap: ## Full zero-to-full deployment on a fresh VPS: install Docker + setu
 .PHONY: deploy
 deploy: check-env ## Build images and bring the whole system up
 	$(COMPOSE) build
-	@. scripts/lib.sh; start_stack_safely
+	$(COMPOSE) up -d
 	@echo ""
-	@echo "System is up. To get an SSL certificate: make ssl"
+	@echo "System is up on 127.0.0.1:$$(grep -E '^APP_HTTP_PORT=' .env | cut -d= -f2 || echo 8081) (not public yet)."
+	@echo "To put it on the internet behind this host's nginx with SSL: make ssl"
 	@$(COMPOSE) ps
 
 .PHONY: build
@@ -310,28 +314,32 @@ logs-backend: ## Backend logs
 logs-web: ## Nginx logs
 	$(COMPOSE) logs -f --tail=100 $(WEB)
 
-# -------------------------------------------------------------------- SSL
+# --------------------------------------------- SSL (host nginx, not a container)
+#
+# This app shares the VPS's port 443 with other projects, so nginx and
+# certbot run on the HOST, not in this compose stack — see
+# scripts/deploy-host-nginx.sh and deploy/nginx/app.conf.template.
 
 .PHONY: ssl
-ssl: check-env ## Get an SSL certificate from Let's Encrypt (first run)
-	@bash scripts/init-ssl.sh
+ssl: check-env ## Configure host nginx + get an SSL certificate from Let's Encrypt (first run)
+	@bash scripts/deploy-host-nginx.sh
 
 .PHONY: ssl-dns
-ssl-dns: check-env ## Get an SSL certificate via manual DNS-01 challenge (use if port 80 isn't reachable; does not auto-renew)
-	@bash scripts/init-ssl-dns.sh
+ssl-dns: check-env ## Same as "make ssl" but via manual DNS-01 challenge (use if port 80 isn't reachable; does not auto-renew)
+	@CHALLENGE=dns bash scripts/deploy-host-nginx.sh
 
 .PHONY: ssl-renew
-ssl-renew: ## Manually renew the certificate (auto-renewal is also enabled)
-	$(COMPOSE) run --rm certbot renew --webroot -w /var/www/certbot
-	$(COMPOSE) exec $(WEB) nginx -s reload
+ssl-renew: ## Manually renew the certificate (auto-renewal via certbot.timer is also enabled)
+	sudo certbot renew
+	sudo nginx -t && sudo systemctl reload nginx
 
 .PHONY: ssl-check
 ssl-check: ## Test renewal without making real changes
-	$(COMPOSE) run --rm certbot renew --webroot -w /var/www/certbot --dry-run
+	sudo certbot renew --dry-run
 
 .PHONY: ssl-info
 ssl-info: ## Show certificate expiry date
-	$(COMPOSE) run --rm --entrypoint "certbot certificates" certbot
+	sudo certbot certificates
 
 # ----------------------------------------------------------------- backup
 

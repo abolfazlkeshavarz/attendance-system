@@ -1,48 +1,26 @@
-# پیکربندی nginx برای استقرار روی VPS
+# پیکربندی nginx داخل کانتینر — استقرار روی VPS
 # ${DOMAIN} و ${BACKEND_UPSTREAM} هنگام بالا آمدن کانتینر جایگزین می‌شوند.
-
-# ------------------------------------------------- HTTP: فقط ACME و هدایت به HTTPS
+#
+# این nginx دیگر TLS را خودش انجام نمی‌دهد و پورت ۸۰/۴۴۳ را به بیرون منتشر
+# نمی‌کند؛ فقط از طریق یک پورت لوکال (مثلاً 127.0.0.1:8081) در دسترس nginx
+# سطح میزبان است، که SSL چند پروژه روی همین سرور را با هم مدیریت می‌کند.
+# هدرهای امنیتی (HSTS و…) هم آنجا تنظیم می‌شوند، نه اینجا — دوباره تنظیم‌شان
+# اینجا فقط باعث تکرار هدر در پاسخ نهایی می‌شود.
 server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
 
-    # بررسی سلامت خود nginx (بدون هدایت، وگرنه healthcheck شکست می‌خورد)
+    # بررسی سلامت خود این کانتینر (برای HEALTHCHECK در Dockerfile)
     location = /healthz {
         access_log off;
         return 200 "ok\n";
         add_header Content-Type text/plain;
     }
 
-    # مسیر تأیید مالکیت دامنه برای certbot — نباید هدایت شود
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        default_type "text/plain";
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
-# ------------------------------------------------------------------ HTTPS
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name ${DOMAIN};
-
-    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-    ssl_session_tickets off;
-
-    include /etc/nginx/snippets/security-headers.conf;
-
-    # تصاویر چهره و بسته‌های همگام‌سازی آفلاین base64 هستند و حجیم می‌شوند
+    # تصاویر چهره و بسته‌های همگام‌سازی آفلاین base64 هستند و حجیم می‌شوند.
+    # nginx سطح میزبان هم باید همین مقدار (یا بیشتر) را برای این دامنه تنظیم
+    # کند، وگرنه درخواست‌های بزرگ قبل از رسیدن به اینجا رد می‌شوند.
     client_max_body_size 25m;
 
     gzip on;
@@ -51,12 +29,6 @@ server {
     gzip_types text/plain text/css application/javascript application/json
                image/svg+xml application/manifest+json;
 
-    location = /healthz {
-        access_log off;
-        return 200 "ok\n";
-        add_header Content-Type text/plain;
-    }
-
     # --------------------------------------------------------------- API
     location /api/ {
         proxy_pass http://${BACKEND_UPSTREAM};
@@ -64,7 +36,11 @@ server {
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        # این کانتینر همیشه از nginx سطح میزبان روی HTTP خام درخواست می‌گیرد؛
+        # $scheme اینجا همیشه "http" است، پس همان مقداری را که میزبان قبلاً
+        # در این هدر گذاشته دست‌نخورده رد می‌کنیم تا FastAPI طرحواره واقعی
+        # (https) را که کاربر دیده ببیند.
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
         proxy_read_timeout 120s;
     }
 
@@ -78,11 +54,19 @@ server {
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
     }
 
-    location = /docs      { proxy_pass http://${BACKEND_UPSTREAM}; proxy_set_header Host $host; }
-    location = /openapi.json { proxy_pass http://${BACKEND_UPSTREAM}; proxy_set_header Host $host; }
+    location = /docs {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+    }
+    location = /openapi.json {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+    }
 
     # ------------------------------------------------------ رابط کاربری
     root /usr/share/nginx/html;
@@ -90,27 +74,22 @@ server {
 
     # مدل‌های تشخیص چهره حجیم و بدون تغییرند — کش طولانی
     location /models/ {
-        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "public, max-age=2592000, immutable";
     }
 
     # فایل‌های ساخته‌شده نام هش‌دار دارند
     location /assets/ {
-        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     # این‌ها هرگز نباید کش شوند وگرنه به‌روزرسانی برنامه روی تبلت گیر می‌کند
     location = /sw.js {
-        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache";
     }
     location = /index.html {
-        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache";
     }
     location = /manifest.webmanifest {
-        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "no-cache";
     }
 

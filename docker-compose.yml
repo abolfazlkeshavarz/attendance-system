@@ -49,38 +49,18 @@ services:
       context: ./frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN را در فایل .env تنظیم کنید}
       BACKEND_UPSTREAM: backend:8000
     ports:
-      - "127.0.0.1:8081:80"
-    volumes:
-      - certbot_conf:/etc/letsencrypt:ro
-      - certbot_www:/var/www/certbot:ro
-    # هر ۶ ساعت پیکربندی را دوباره می‌خواند تا گواهی تمدیدشده اعمال شود.
-    #
-    # صدا زدن صریح /docker-entrypoint.sh لازم است و اضافی نیست: اسکریپت ورودیِ
-    # تصویر رسمی nginx فقط وقتی قالب‌های conf را با envsubst پردازش می‌کند که
-    # آرگومان اولش دقیقاً «nginx» باشد. چون اینجا فرمان با /bin/sh شروع می‌شود،
-    # آن مرحله رد می‌شود و nginx بی‌سروصدا با پیکربندی پیش‌فرض بالا می‌آید.
-    command: >
-      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done &
-                  exec /docker-entrypoint.sh nginx -g 'daemon off;'"
-
-  certbot:
-    image: certbot/certbot:latest
-    restart: unless-stopped
-    volumes:
-      - certbot_conf:/etc/letsencrypt
-      - certbot_www:/var/www/certbot
-    # هر ۱۲ ساعت تمدید را بررسی می‌کند (certbot خودش می‌داند زود است یا نه)
-    entrypoint: >
-      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet;
-                  sleep 12h & wait $${!}; done"
+      # فقط از خودِ همین سرور در دسترس است — nginx سطح میزبان (که چند پروژه
+      # روی همین VPS را با دامنه‌های مختلف روی ۴۴۳ سرو می‌کند) بهش وصل می‌شود.
+      # این پورت باید بین پروژه‌های مختلف روی این سرور یکتا باشد؛ در .env با
+      # APP_HTTP_PORT عوضش کنید.
+      - "127.0.0.1:${APP_HTTP_PORT:-8081}:80"
 
 volumes:
   postgres_data:
   media:
-  certbot_conf:
-  certbot_www:

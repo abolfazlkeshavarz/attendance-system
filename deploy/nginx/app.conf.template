@@ -1,0 +1,59 @@
+# nginx سطح میزبان برای این پروژه — یکی از چند پروژه روی این VPS، هرکدام با
+# دامنه/زیردامنه خودش، همه پشت همین یک nginx که پورت ۴۴۳ سرور را در اختیار
+# دارد. این فایل با «make ssl» (که scripts/deploy-host-nginx.sh را صدا
+# می‌زند) از روی همین قالب ساخته می‌شود — دستی ویرایشش نکنید، چون با هر
+# اجرای دوباره از نو بازنویسی می‌شود.
+#
+# کانتینر «web» این پروژه هیچ پورتی مستقیم به بیرون نمی‌دهد؛ فقط از طریق
+# 127.0.0.1:${APP_HTTP_PORT} در دسترس است (نگاه کنید به docker-compose.yml).
+# این nginx تنها لایه‌ای است که TLS را می‌بیند و آن را روی این پورت به HTTP
+# ساده تبدیل می‌کند.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # مسیر تأیید مالکیت دامنه — بین همه پروژه‌های این سرور مشترک است
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    include /etc/nginx/snippets/attendance-security-headers.conf;
+
+    # تصاویر چهره و بسته‌های همگام‌سازی آفلاین base64 هستند و حجیم می‌شوند.
+    # کانتینر هم همین مقدار را برای خودش تنظیم کرده؛ اینجا هم لازم است چون
+    # این nginx اولین لایه‌ای است که درخواست را می‌بیند.
+    client_max_body_size 25m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${APP_HTTP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+}

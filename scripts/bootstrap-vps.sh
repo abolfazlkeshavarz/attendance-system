@@ -2,14 +2,25 @@
 #
 # Full zero-to-deployed setup on a brand-new Ubuntu/Debian VPS: installs
 # Docker, configures internal mirrors (optional, for Iranian servers),
-# creates .env, brings the system up, and obtains an SSL certificate —
-# all in one run.
+# creates .env, brings the system up, and configures this server's nginx +
+# an SSL certificate for it — all in one run.
+#
+# This app runs fine alongside OTHER projects on the same VPS, each on its
+# own (sub)domain: only this project's Docker containers are installed by
+# this script, and the SSL/reverse-proxy step (make ssl) reuses the host's
+# single nginx + certbot rather than trying to own port 443 itself — see
+# scripts/deploy-host-nginx.sh. If nginx/certbot are already installed for
+# another project, this leaves them and every other project's config alone.
 #
 # Usage (from the project root, after git clone):
 #   ./scripts/bootstrap-vps.sh
 #
 # You can supply the domain and email up front so nothing is prompted:
 #   DOMAIN=hozur.example.com LETSENCRYPT_EMAIL=admin@example.com ./scripts/bootstrap-vps.sh
+#
+# If this is not the first project on this VPS, also set a free local port
+# (must be unique per project — default 8081):
+#   APP_HTTP_PORT=8082 DOMAIN=... LETSENCRYPT_EMAIL=... ./scripts/bootstrap-vps.sh
 #
 # To work around filtering/throttling on Iranian servers (apt and docker mirrors):
 #   MIRRORS=1 ./scripts/bootstrap-vps.sh
@@ -90,11 +101,21 @@ fi
 : "${DOMAIN:?DOMAIN is required}"
 : "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL is required}"
 
+if [[ -z "${APP_HTTP_PORT:-}" ]] && [[ -d /etc/nginx || -x /usr/sbin/nginx ]]; then
+  echo ""
+  echo "nginx is already on this server, which usually means another project"
+  echo "is already deployed here. This app's containers must publish their"
+  echo "local port on a number no other project uses (default: 8081)."
+  read -r -p "Local port for this app [8081]: " APP_HTTP_PORT
+fi
+APP_HTTP_PORT="${APP_HTTP_PORT:-8081}"
+
 # ------------------------------------------------------------------- .env
 echo "==> Creating .env file"
 make setup
 sed -i "s|^DOMAIN=.*|DOMAIN=${DOMAIN}|" .env
 sed -i "s|^LETSENCRYPT_EMAIL=.*|LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}|" .env
+sed -i "s|^APP_HTTP_PORT=.*|APP_HTTP_PORT=${APP_HTTP_PORT}|" .env
 if [[ -n "${LETSENCRYPT_STAGING:-}" ]]; then
   sed -i "s|^LETSENCRYPT_STAGING=.*|LETSENCRYPT_STAGING=${LETSENCRYPT_STAGING}|" .env
 fi
