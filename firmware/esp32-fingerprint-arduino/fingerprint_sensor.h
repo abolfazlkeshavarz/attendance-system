@@ -44,17 +44,18 @@ class FingerprintSensor {
 
   bool deleteAtSlot(uint16_t slot);
 
-  // --- Template portability (PS_UpChar / PS_DownChar) ---
+  // --- Template portability (multi-gate sync) ---
   //
-  // VERIFY BEFORE RELYING ON THIS: the exact call sequence below matches the
-  // mainline Adafruit_Fingerprint library's uploadModel()/downloadModel()/
-  // getModel() API as of v2.1.x. Confirm your installed library version
-  // exposes these three methods with this signature — some older versions
-  // and some GT511-family forks (wrong chip family for the FPM22, but easy
-  // to accidentally pull in) do not support upload/download at all. If it's
-  // missing, multi-gate sync is not possible with this library and you must
-  // either patch it in from the AS608 datasheet's PS_UpChar/PS_DownChar
-  // packet format, or fall back to enrolling each employee at every gate.
+  // NOT SUPPORTED by the stock Adafruit_Fingerprint library: confirmed
+  // against the library's public header that loadModel()/getModel() only
+  // return a status byte, never the actual template bytes, and there is no
+  // setModel()/downloadModel() at all. Both directions are open, unmerged
+  // feature requests upstream (issues #36 and #127 on
+  // github.com/adafruit/Adafruit-Fingerprint-Sensor-Library).
+  // extractTemplate()/injectTemplate() below always return false as a
+  // result — multi-gate sync is a no-op until either the library is patched
+  // to expose the raw PS_UpChar/PS_DownChar packet stream, or you fall back
+  // to enrolling each employee separately at every physical gate.
   bool extractTemplate(uint16_t slot, std::vector<uint8_t> &out);
   bool injectTemplate(uint16_t slot, const std::vector<uint8_t> &data);
 

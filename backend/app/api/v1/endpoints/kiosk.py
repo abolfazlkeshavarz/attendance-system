@@ -47,6 +47,7 @@ def handshake(device: CurrentDevice, db: DbSession) -> dict:
             "name": device.name,
             "location": device.location,
             "device_uid": device.device_uid,
+            "kind": device.kind,
         },
         "server_time_utc": now.isoformat(),
         "server_time_local": local.isoformat(),

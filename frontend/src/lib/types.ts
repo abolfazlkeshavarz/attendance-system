@@ -275,6 +275,28 @@ export interface AuthMethods {
   pin_enabled: boolean
 }
 
+export type FingerprintScanPhase =
+  | 'idle'
+  | 'scanning'
+  | 'matched'
+  | 'success'
+  | 'error'
+  | 'enroll_scanning'
+  | 'enroll_success'
+  | 'enroll_error'
+
+export interface FingerprintScanStatus {
+  phase: FingerprintScanPhase
+  employee_name?: string | null
+  kind?: 'in' | 'out' | null
+  message?: string | null
+  confidence?: number | null
+  device_name?: string | null
+  at?: string | null
+  server_clock: string
+  today_jalali: string
+}
+
 export interface FingerprintEnrollJob {
   id: number
   employee_id: number

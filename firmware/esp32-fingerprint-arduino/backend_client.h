@@ -28,6 +28,10 @@ class BackendClient {
   bool punch(int slotId, const char *kind, float confidence, const String &happenedAtIso,
              const String &clientUuid, bool createdOffline, JsonDocument &out);
 
+  // Fire-and-forget: tells the backend a finger is being read right now so
+  // the browser kiosk can show a live "scanning" state. Failure is ignored.
+  void reportScan(const char *phase);
+
  private:
   String host_;
   String deviceKey_;

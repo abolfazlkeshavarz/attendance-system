@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
+
+# phases the ESP32 reports directly; the rest ("matched", "success",
+# "enroll_success", "enroll_error", "idle") are set server-side from the
+# punch / enroll endpoints.
+ScanStatusPhaseIn = Literal["scanning", "error", "enroll_scanning"]
 
 
 class FingerprintEnrollStart(BaseModel):
@@ -90,3 +96,23 @@ class FingerprintPunchRequest(BaseModel):
     happened_at: datetime | None = None
     client_uuid: str | None = None
     created_offline: bool = False
+
+
+class FingerprintScanStatusIn(BaseModel):
+    """پینگ ماژول ESP32 هنگام قرار گرفتن انگشت روی حسگر — فقط برای نمایش زندهٔ کیوسک."""
+
+    phase: ScanStatusPhaseIn
+
+
+class FingerprintScanStatusOut(BaseModel):
+    """وضعیت لحظه‌ای دستگاه اثر انگشت برای صفحهٔ کیوسک."""
+
+    phase: str  # idle | scanning | matched | success | error | enroll_scanning | enroll_success | enroll_error
+    employee_name: str | None = None
+    kind: str | None = None
+    message: str | None = None
+    confidence: int | None = None
+    device_name: str | None = None
+    at: datetime | None = None
+    server_clock: str
+    today_jalali: str

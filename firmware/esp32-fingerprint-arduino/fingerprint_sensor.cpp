@@ -89,7 +89,8 @@ uint16_t SlotMap::findFree(uint16_t capacity) const {
 bool FingerprintSensor::begin(HardwareSerial &serial, int rxPin, int txPin) {
   serial.begin(57600, SERIAL_8N1, rxPin, txPin);
   finger_ = new Adafruit_Fingerprint(&serial);
-  return finger_->begin(57600);
+  finger_->begin(57600);  // this library's begin() returns void, not a status
+  return true;            // verify() below does the real link check
 }
 
 bool FingerprintSensor::verify() {
@@ -148,25 +149,29 @@ bool FingerprintSensor::deleteAtSlot(uint16_t slot) {
 }
 
 bool FingerprintSensor::extractTemplate(uint16_t slot, std::vector<uint8_t> &out) {
-  if (finger_->loadModel(slot) != FINGERPRINT_OK) return false;
-  if (finger_->getModel() != FINGERPRINT_OK) return false;  // requests PS_UpChar
-
   out.clear();
-  // getModel() streams the template over the same UART link as raw data
-  // packets; the mainline library exposes this via finger_->getFingerprintTemplate()
-  // in some versions or by reading finger_->readRaw()/packet buffers in others.
-  // TODO(verify against your installed library version): plug in whichever
-  // accessor your Adafruit_Fingerprint build actually provides here to fill
-  // `out` with the raw template bytes it just received.
-  return !out.empty();
+  // NOT IMPLEMENTABLE with the stock Adafruit_Fingerprint library (checked
+  // against the current public header): loadModel()/getModel() only issue
+  // the PS_LoadChar/PS_UpChar commands and return a status byte — the raw
+  // template bytes the sensor streams back are consumed internally
+  // (recvPacket) and never exposed to caller code. There is no public
+  // method that hands you the template buffer.
+  // Confirmed open/unmerged upstream: github.com/adafruit/
+  // Adafruit-Fingerprint-Sensor-Library issues #36 and #127.
+  // Until the library is patched to expose the raw packet stream, this
+  // always fails — which is fine for single-gate use (nothing calls this
+  // except cross-gate sync) but means multi-gate template sync cannot work
+  // on this library as shipped.
+  return false;
 }
 
 bool FingerprintSensor::injectTemplate(uint16_t slot, const std::vector<uint8_t> &data) {
-  if (data.empty()) return false;
-  if (finger_->setModel(slot) != FINGERPRINT_OK) return false;  // announces PS_DownChar
-
-  // TODO(verify against your installed library version): send `data` down to
-  // the sensor over the same link (the counterpart of the getModel() TODO
-  // above), then confirm with finger_->storeModel(slot).
-  return finger_->storeModel(slot) == FINGERPRINT_OK;
+  // Same limitation as extractTemplate(), mirrored: the stock library has
+  // no setModel()/downloadModel() at all (verify with `grep -n "Fingerprint("
+  // <path-to-library>/Adafruit_Fingerprint.h` if you want to see the exact
+  // public method list yourself). There is no PS_DownChar counterpart to
+  // call here, so this can never succeed until the library is patched.
+  (void)slot;
+  (void)data;
+  return false;
 }

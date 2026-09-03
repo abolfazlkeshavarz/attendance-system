@@ -1,7 +1,7 @@
 /** منطق تبلت ورودی: دوربین، گالری چهره، صف آفلاین و همگام‌سازی. */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { deviceKey, kioskApi } from '../lib/api'
-import type { FaceGallery, GalleryItem } from '../lib/types'
+import type { FaceGallery, FingerprintScanStatus, GalleryItem } from '../lib/types'
 import type { MatchCandidate } from '../lib/faceEngine'
 import { faceEngine } from '../lib/faceEngine'
 import {
@@ -29,6 +29,9 @@ export interface KioskSettings {
   face_enabled: boolean
   fingerprint_enabled: boolean
   pin_enabled: boolean
+  // نوع دستگاهِ متصل به این کلید: «tablet» صفحهٔ دوربین، «fingerprint» صفحهٔ
+  // اثر انگشت را نشان می‌دهد. از بخش device در پاسخ handshake خوانده می‌شود.
+  device_kind: 'tablet' | 'fingerprint'
 }
 
 const FALLBACK_SETTINGS: KioskSettings = {
@@ -40,6 +43,7 @@ const FALLBACK_SETTINGS: KioskSettings = {
   face_enabled: true,
   fingerprint_enabled: false,
   pin_enabled: true,
+  device_kind: 'tablet',
 }
 
 /**
@@ -59,7 +63,11 @@ export function useKioskSettings(enabled: boolean) {
     kioskApi
       .get('/kiosk/handshake')
       .then((res) => {
-        const fresh = { ...FALLBACK_SETTINGS, ...res.data.settings }
+        const fresh: KioskSettings = {
+          ...FALLBACK_SETTINGS,
+          ...res.data.settings,
+          device_kind: res.data.device?.kind === 'fingerprint' ? 'fingerprint' : 'tablet',
+        }
         localStorage.setItem('att.kioskSettings', JSON.stringify(fresh))
         setSettings(fresh)
       })
@@ -67,6 +75,47 @@ export function useKioskSettings(enabled: boolean) {
   }, [enabled])
 
   return settings
+}
+
+/**
+ * وضعیت لحظه‌ای دستگاه اثر انگشت را از سرور می‌گیرد (هر ~۱ ثانیه).
+ *
+ * تطبیق روی خودِ ماژول ESP32 انجام می‌شود، پس این تنها راهِ مرورگر برای
+ * دانستن «الان کسی انگشتش را روی حسگر گذاشته» است. اگر آخرین رویداد کهنه یا
+ * درخواست ناموفق بود، به idle برمی‌گردیم.
+ */
+const FP_STATUS_STALE_MS = 8000
+
+export function useFingerprintStatus(enabled: boolean) {
+  const [status, setStatus] = useState<FingerprintScanStatus | null>(null)
+
+  useEffect(() => {
+    if (!enabled) {
+      setStatus(null)
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await kioskApi.get<FingerprintScanStatus>('/kiosk/fingerprint/status')
+        if (cancelled) return
+        const fresh = res.data
+        const stale =
+          fresh.at != null && Date.now() - new Date(fresh.at).getTime() > FP_STATUS_STALE_MS
+        setStatus(stale ? { ...fresh, phase: 'idle' } : fresh)
+      } catch {
+        if (!cancelled) setStatus((s) => (s ? { ...s, phase: 'idle' } : s))
+      }
+    }
+    void poll()
+    const timer = setInterval(() => void poll(), 1000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [enabled])
+
+  return status
 }
 
 export type KioskPhase = 'setup' | 'booting' | 'scanning' | 'greeting' | 'error'

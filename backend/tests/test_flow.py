@@ -557,6 +557,71 @@ def test_face_images_are_not_publicly_readable(client, admin_headers):
     assert allowed.content[:2] == b"\xff\xd8"  # سرآیند JPEG
 
 
+def test_fingerprint_kiosk_scan_status_roundtrip(client, admin_headers):
+    """پینگ اسکن دستگاه اثر انگشت و ثبت موفق تردد باید در /status دیده شود."""
+    fp_emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "1700", "first_name": "بهرام", "last_name": "نادری"},
+    ).json()
+
+    # یک دستگاه اثر انگشت جدا بساز
+    fp_device = client.post(
+        f"{API}/devices",
+        headers=admin_headers,
+        json={"name": "درب اثر انگشت", "location": "سالن", "kind": "fingerprint"},
+    ).json()
+    fp_headers = {"X-Device-Key": fp_device["api_key"]}
+
+    # روش اثر انگشت را فعال کن
+    client.patch(
+        f"{API}/settings/auth-methods", headers=admin_headers, json={"fingerprint_enabled": True}
+    )
+
+    # handshake باید نوع دستگاه را برگرداند
+    hs = client.get(f"{API}/kiosk/handshake", headers=fp_headers).json()
+    assert hs["device"]["kind"] == "fingerprint"
+
+    # مرحلهٔ گذرا: انگشت روی حسگر
+    assert (
+        client.post(
+            f"{API}/kiosk/fingerprint/scan-status", headers=fp_headers, json={"phase": "scanning"}
+        ).status_code
+        == 200
+    )
+    status = client.get(f"{API}/kiosk/fingerprint/status", headers=fp_headers).json()
+    assert status["phase"] == "scanning"
+    assert status["server_clock"] and status["today_jalali"]
+
+    # ثبت‌نام یک اسلات برای این کارمند روی این دستگاه
+    job = client.post(
+        f"{API}/fingerprint/enroll",
+        headers=admin_headers,
+        json={"employee_id": fp_emp["id"], "device_id": fp_device["id"]},
+    ).json()
+    done = client.post(
+        f"{API}/kiosk/fingerprint/enroll/complete",
+        headers=fp_headers,
+        json={"job_id": job["id"], "slot_id": 3, "template_base64": "", "model_name": "fpm22"},
+    )
+    assert done.status_code == 200, done.text
+    assert client.get(f"{API}/kiosk/fingerprint/status", headers=fp_headers).json()["phase"] == "enroll_success"
+
+    # تردد واقعی با همان اسلات → /status باید success با نام و نوع نشان دهد
+    punch = client.post(
+        f"{API}/kiosk/fingerprint/punch",
+        headers=fp_headers,
+        json={"slot_id": 3, "confidence": 180},
+    )
+    assert punch.status_code == 200, punch.text
+    assert punch.json()["status"] == "created"
+    st = client.get(f"{API}/kiosk/fingerprint/status", headers=fp_headers).json()
+    assert st["phase"] == "success"
+    assert st["employee_name"] == "بهرام نادری"
+    assert st["kind"] == "in"
+    assert st["device_name"] == "درب اثر انگشت"
+
+
 def test_kiosk_heartbeat_reports_queue_depth(client, device, admin_headers):
     headers = {"X-Device-Key": device["api_key"]}
     res = client.post(

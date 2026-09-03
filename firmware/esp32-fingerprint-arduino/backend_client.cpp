@@ -109,6 +109,12 @@ bool BackendClient::syncConfirm(JsonVariantConst added, JsonVariantConst removed
   return request("POST", "/api/v1/kiosk/fingerprint/sync/confirm", &body, out);
 }
 
+void BackendClient::reportScan(const char *phase) {
+  JsonDocument body, out;
+  body["phase"] = phase;
+  request("POST", "/api/v1/kiosk/fingerprint/scan-status", &body, out);
+}
+
 bool BackendClient::punch(int slotId, const char *kind, float confidence,
                            const String &happenedAtIso, const String &clientUuid,
                            bool createdOffline, JsonDocument &out) {

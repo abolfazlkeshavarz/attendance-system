@@ -26,13 +26,20 @@ from app.schemas.fingerprint import (
     FingerprintEnrollJobOut,
     FingerprintEnrollStart,
     FingerprintPunchRequest,
+    FingerprintScanStatusIn,
+    FingerprintScanStatusOut,
     FingerprintSyncConfirm,
     FingerprintSyncItem,
     FingerprintSyncRequest,
     FingerprintSyncResponse,
     PendingEnrollOut,
 )
-from app.services import attendance_service, fingerprint_service, settings_service
+from app.services import (
+    attendance_service,
+    fingerprint_service,
+    kiosk_status_service,
+    settings_service,
+)
 
 admin_router = APIRouter()
 device_router = APIRouter()
@@ -84,7 +91,22 @@ def cancel_enroll(job_id: int, db: DbSession, _: ManagerUser) -> Message:
 @device_router.get("/pending-enroll", response_model=PendingEnrollOut, summary="بررسی درخواست ثبت‌نام در انتظار")
 def pending_enroll(device: CurrentDevice, db: DbSession) -> PendingEnrollOut:
     job = fingerprint_service.get_pending_job_for_device(db, device.id)
+    if job is not None:
+        kiosk_status_service.record(
+            db, device, phase="enroll_scanning", employee=job.employee
+        )
     return PendingEnrollOut(job=_job_out(job) if job else None)
+
+
+@device_router.post("/scan-status", response_model=Message, summary="اعلام قرار گرفتن انگشت روی حسگر (برای کیوسک)")
+def scan_status(payload: FingerprintScanStatusIn, device: CurrentDevice, db: DbSession) -> Message:
+    kiosk_status_service.record(db, device, phase=payload.phase)
+    return Message(detail="ثبت شد")
+
+
+@device_router.get("/status", response_model=FingerprintScanStatusOut, summary="وضعیت لحظه‌ای دستگاه اثر انگشت")
+def scan_status_read(device: CurrentDevice, db: DbSession) -> FingerprintScanStatusOut:
+    return FingerprintScanStatusOut(**kiosk_status_service.latest_fingerprint(db))
 
 
 @device_router.post("/enroll/complete", response_model=FingerprintEnrollJobOut, summary="تأیید موفقیت ثبت‌نام")
@@ -101,7 +123,9 @@ def enroll_complete(
             model_name=payload.model_name,
         )
     except fingerprint_service.FingerprintError as exc:
+        kiosk_status_service.record(db, device, phase="enroll_error", message=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    kiosk_status_service.record(db, device, phase="enroll_success", employee=job.employee)
     return _job_out(job)
 
 
@@ -113,6 +137,7 @@ def enroll_fail(payload: FingerprintEnrollFail, device: CurrentDevice, db: DbSes
         )
     except fingerprint_service.FingerprintError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    kiosk_status_service.record(db, device, phase="enroll_error", message=payload.error)
     return _job_out(job)
 
 
@@ -146,12 +171,21 @@ def sync_confirm(payload: FingerprintSyncConfirm, device: CurrentDevice, db: DbS
 @device_router.post("/punch", response_model=PunchResult, summary="ثبت تردد با اثر انگشت")
 def punch(payload: FingerprintPunchRequest, device: CurrentDevice, db: DbSession) -> PunchResult:
     if not settings_service.get_auth_methods(db).fingerprint_enabled:
+        kiosk_status_service.record(
+            db, device, phase="error", message="ثبت تردد با اثر انگشت غیرفعال است"
+        )
         raise HTTPException(status_code=403, detail="ثبت تردد با اثر انگشت غیرفعال است")
 
     emp = fingerprint_service.resolve_employee(db, device.id, payload.slot_id)
     if emp is None:
+        kiosk_status_service.record(
+            db, device, phase="error", message="این اثر انگشت روی هیچ پرسنلی ثبت نشده است"
+        )
         raise HTTPException(status_code=404, detail="این اثر انگشت روی هیچ پرسنلی ثبت نشده است")
     if not emp.is_active:
+        kiosk_status_service.record(
+            db, device, phase="error", employee=emp, message="این پرسنل در سامانه فعال نیست"
+        )
         raise HTTPException(status_code=403, detail="این پرسنل در سامانه فعال نیست")
 
     try:
@@ -167,9 +201,18 @@ def punch(payload: FingerprintPunchRequest, device: CurrentDevice, db: DbSession
             created_offline=payload.created_offline,
         )
     except attendance_service.PunchError as exc:
+        kiosk_status_service.record(db, device, phase="error", employee=emp, message=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     device.last_sync_at = now_utc()
-    db.commit()
     result.message = f"{emp.full_name} — {result.message}"
+    kiosk_status_service.record(
+        db,
+        device,
+        phase="success",
+        employee=emp,
+        kind=result.kind,
+        message=result.message,
+        confidence=payload.confidence,
+    )
     return result
