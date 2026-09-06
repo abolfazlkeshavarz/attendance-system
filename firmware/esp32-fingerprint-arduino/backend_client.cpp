@@ -9,7 +9,7 @@ BackendClient::BackendClient(String host, String deviceKey)
     : host_(std::move(host)), deviceKey_(std::move(deviceKey)) {}
 
 bool BackendClient::request(const char *method, const String &path, JsonDocument *body,
-                             JsonDocument &out) {
+                             JsonDocument &out, int connectTimeoutMs, int readTimeoutMs) {
   String url = host_ + path;
   HTTPClient http;
   WiFiClientSecure secureClient;
@@ -27,8 +27,8 @@ bool BackendClient::request(const char *method, const String &path, JsonDocument
   }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-Key", deviceKey_);
-  http.setTimeout(8000);
-  http.setConnectTimeout(5000);
+  http.setTimeout(readTimeoutMs);
+  http.setConnectTimeout(connectTimeoutMs);
 
   String payload;
   if (body != nullptr) {
@@ -112,12 +112,14 @@ bool BackendClient::syncConfirm(JsonVariantConst added, JsonVariantConst removed
 void BackendClient::reportScan(const char *phase) {
   JsonDocument body, out;
   body["phase"] = phase;
-  request("POST", "/api/v1/kiosk/fingerprint/scan-status", &body, out);
+  request("POST", "/api/v1/kiosk/fingerprint/scan-status", &body, out,
+          /*connectTimeoutMs=*/1500, /*readTimeoutMs=*/1200);
 }
 
 bool BackendClient::punch(int slotId, const char *kind, float confidence,
                            const String &happenedAtIso, const String &clientUuid,
-                           bool createdOffline, JsonDocument &out) {
+                           bool createdOffline, JsonDocument &out, int connectTimeoutMs,
+                           int readTimeoutMs) {
   JsonDocument body;
   body["slot_id"] = slotId;
   if (kind != nullptr) body["kind"] = kind;
@@ -125,5 +127,6 @@ bool BackendClient::punch(int slotId, const char *kind, float confidence,
   if (happenedAtIso.length() > 0) body["happened_at"] = happenedAtIso;
   if (clientUuid.length() > 0) body["client_uuid"] = clientUuid;
   body["created_offline"] = createdOffline;
-  return request("POST", "/api/v1/kiosk/fingerprint/punch", &body, out);
+  return request("POST", "/api/v1/kiosk/fingerprint/punch", &body, out, connectTimeoutMs,
+                 readTimeoutMs);
 }

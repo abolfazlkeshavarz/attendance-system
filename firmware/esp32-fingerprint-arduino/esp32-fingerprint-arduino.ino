@@ -156,22 +156,28 @@ void checkResetButton() {
 }
 
 void ensureWifi() {
-  if (WiFi.status() == WL_CONNECTED) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    led::setWifiDown(false);
+    return;
+  }
 
   led::setReady(false);
+  led::setWifiDown(true);  // red solid for the whole reconnect attempt
   wdtFeed();
   if (config::connectBestWifi(g_cfg)) {
     oled::log("wifi connected");
+    led::setWifiDown(false);
     wdtFeed();
     return;
   }
 
-  // Both stored networks are unreachable — open the portal so someone can
-  // register another one (lands in slot 2, keeping the original slot 1).
-  Serial.println("[wifi] both saved networks unreachable, opening portal");
-  oled::log("both wifi down, portal");
+  // None of the stored networks are reachable — open the portal so someone
+  // can register another one (it becomes the new MRU head; the oldest of the
+  // three is dropped).
+  Serial.println("[wifi] no saved network reachable, opening portal");
+  oled::log("all wifi down, portal");
   wdtPause();
-  config::runProvisioningPortal(g_cfg, /*firstTime=*/false);
+  config::runProvisioningPortal(g_cfg);
   wdtResume();
 }
 
@@ -342,7 +348,6 @@ void handleMatch(uint16_t slot, uint16_t confidence) {
   g_lastSlotMs = now;
 
   led::scanStart();
-  g_backend->reportScan("scanning");
 
   JsonDocument entry;
   entry["slot_id"] = slot;
@@ -352,8 +357,14 @@ void handleMatch(uint16_t slot, uint16_t confidence) {
 
   if (WiFi.status() == WL_CONNECTED) {
     JsonDocument resp;
+    // Tight timeouts: someone is standing at the gate. If the server is slow
+    // or unreachable the punch drops straight into the offline queue and the
+    // gate is ready again in well under 3 s; flushQueue() delivers it later.
+    // (No separate "scanning" ping here — it was a second blocking round-trip
+    // on the hot path; the punch endpoint updates the kiosk status itself.)
     bool ok = g_backend->punch(slot, nullptr, (float)confidence, entry["happened_at"].as<String>(),
-                                entry["client_uuid"].as<String>(), false, resp);
+                                entry["client_uuid"].as<String>(), false, resp,
+                                /*connectTimeoutMs=*/1500, /*readTimeoutMs=*/1200);
     if (ok) {
       char buf[32];
       snprintf(buf, sizeof(buf), "punch slot %u ok", slot);
@@ -413,7 +424,7 @@ void setup() {
   if (!config::load(g_cfg)) {
     oled::log("no config, opening portal");
     wdtPause();
-    bool ok = config::runProvisioningPortal(g_cfg, /*firstTime=*/true);
+    bool ok = config::runProvisioningPortal(g_cfg);
     wdtResume();
     if (!ok) {
       Serial.println("[setup] provisioning failed, restarting");
@@ -460,7 +471,9 @@ void loop() {
   ensureWifi();
   unsigned long now = millis();
 
-  bool ready = g_state == AppState::RUN && g_fingerprintEnabled && WiFi.status() == WL_CONNECTED;
+  bool wifiUp = WiFi.status() == WL_CONNECTED;
+  bool ready = g_state == AppState::RUN && g_fingerprintEnabled && wifiUp;
+  led::setWifiDown(!wifiUp);
   led::setReady(ready);
 
   switch (g_state) {
@@ -519,8 +532,9 @@ void loop() {
       if (!g_fingerprintEnabled) {
         // Punching is off, but enrollment/sync above still run — an admin
         // may want fingerprints registered ahead of turning this back on.
-        // The red LED double-blink (led::setReady(false)) is the "disabled,
-        // not broken" cue at the gate.
+        // With Wi-Fi still up, led::setReady(false) leaves the blue LED off
+        // and the red LED slow double-blinking — the "disabled, not broken"
+        // cue at the gate.
         break;
       }
 

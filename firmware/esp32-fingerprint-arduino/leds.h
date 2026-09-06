@@ -7,14 +7,23 @@
 // feedback.
 //
 // Wiring (LED anode -> GPIO through ~330R, cathode -> GND):
-//   green  "status"  -> GPIO25   device configured, WiFi up, ready to scan:
-//                                one short pulse every 5 s. Fingerprint
-//                                punching disabled -> stays off.
-//   blue   "scan"    -> GPIO27   (the pin the buzzer used to be on) solid
-//                                on while a finger is being read; 5 fast
-//                                blinks when a scan/enrollment completes.
-//   red    "error"   -> GPIO26   short burst on any failure; while the
-//                                device is disabled, double-blink every 3 s.
+//   green  "success" -> GPIO25   lights solid for 2 s after a finger is
+//                                matched and the attendance punch is
+//                                accepted (or an enrollment finishes). Off
+//                                the rest of the time.
+//   blue   "ready"   -> GPIO27   (the pin the buzzer used to be on) solid on
+//                                whenever the gate is healthy and ready to
+//                                scan — including right after a successful
+//                                scan. Blinks very fast while a finger is
+//                                actually being read. Off when the gate is
+//                                not ready (disabled from the panel, or Wi-Fi
+//                                down).
+//   red    "error"   -> GPIO26   solid on the whole time Wi-Fi is
+//                                disconnected; a short burst on any other
+//                                failure; a slow double-blink while
+//                                fingerprint punching is switched off in the
+//                                panel (Wi-Fi still up) so people can tell
+//                                "disabled" from "broken".
 namespace led {
 
 // Call once from setup(), after Serial.begin().
@@ -23,16 +32,22 @@ void begin();
 // Call once per loop() iteration — advances every blink pattern.
 void tick();
 
-// ready  -> green heartbeat every 5 s, red idle.
-// !ready -> green off, red double-blink every 3 s (device disabled / not
-//           ready). Cheap to call every loop(); only changes state on a
-//           transition.
+// Gate is in RUN, fingerprint punching enabled, Wi-Fi connected.
+//   ready  -> blue solid on (idle-ready baseline).
+//   !ready -> blue off. If Wi-Fi is also down, red goes solid (see
+//             setWifiDown); otherwise red slow double-blinks (disabled).
+// Cheap to call every loop(); only acts on a change.
 void setReady(bool ready);
 
-void scanStart();    // blue solid on (a finger is being read)
-void scanSuccess();  // blue: 5 fast blinks, then off
-void scanError();    // red burst; blue off
-void clearScan();    // blue off (scan aborted, no result)
+// Wi-Fi link state. true -> red LED solid on immediately (works even while
+// a blocking reconnect keeps tick() from running). false -> red returns to
+// its normal idle/burst behaviour.
+void setWifiDown(bool down);
+
+void scanStart();    // blue: very fast blink (a finger is being read)
+void scanSuccess();  // green: solid for 2 s; blue returns to the ready state
+void scanError();    // red: short burst
+void clearScan();    // blue back to ready state (scan aborted, no result)
 
 // All three solid on — used as a visible "wiping config / rebooting" cue.
 void allOn();

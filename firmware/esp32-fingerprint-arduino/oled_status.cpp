@@ -14,8 +14,15 @@ constexpr int kPinScl = 22;
 
 // Font is 6px wide / 8px tall at text size 1 -> 21 chars fit per 128px row.
 constexpr int kCharsPerLine = 21;
-constexpr int kHeaderRows = 1;
-constexpr int kLogRows = (kScreenHeight / 8) - kHeaderRows;  // 7 rows on a 64px screen
+// Row layout on a 64px screen: header glyph at y0-6, separator line at y8,
+// then log rows every 8px from y9 -> 9,17,25,33,41,49,57. The classic 6x8
+// font only paints 7 glyph pixels per cell (the 8th is blank spacing), so
+// the last row (y57-63) sits fully on screen. The previous layout started
+// the rows at y12, pushing row 7 to y60-67 and clipping it in half.
+constexpr int kSeparatorY = 8;
+constexpr int kFirstLogY = 9;
+constexpr int kRowStepY = 8;
+constexpr int kLogRows = 7;
 
 Adafruit_SSD1306 *g_display = nullptr;
 bool g_ready = false;
@@ -49,14 +56,14 @@ void redraw() {
   g_display->setTextColor(SSD1306_WHITE);
 
   g_display->setCursor(0, 0);
-  g_display->println(g_statusLine);
-  g_display->drawFastHLine(0, 9, kScreenWidth, SSD1306_WHITE);
+  g_display->print(g_statusLine);
+  g_display->drawFastHLine(0, kSeparatorY, kScreenWidth, SSD1306_WHITE);
 
-  int y = 12;
+  int y = kFirstLogY;
   for (int i = 0; i < g_logCount; i++) {
     g_display->setCursor(0, y);
-    g_display->println(g_logLines[i]);
-    y += 8;
+    g_display->print(g_logLines[i]);
+    y += kRowStepY;
   }
   g_display->display();
 }

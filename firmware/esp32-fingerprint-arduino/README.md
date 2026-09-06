@@ -87,9 +87,9 @@ sits on GPIO27, the pin the buzzer used to use — there is no buzzer anymore.
 
 | LED | ESP32 pin | Behaviour |
 |---|---|---|
-| green "status" | GPIO25 | one short pulse every 5 s when the gate is configured, on WiFi, and ready to scan. Off while fingerprint punching is disabled from the panel. |
-| blue "scan" | GPIO27 | solid on while a finger is being read; 5 fast blinks when a scan or an enrollment finishes. |
-| red "error" | GPIO26 | short burst on any failure; double-blink every 3 s while fingerprint punching is disabled (tells people at the gate it's switched off, not broken). |
+| blue "ready" | GPIO27 | **solid on** whenever the gate is healthy and ready to scan — stays on after a successful scan too. Blinks very fast while a finger is being read. Off when the gate is not ready (disabled from the panel, or WiFi down). |
+| green "success" | GPIO25 | solid for 2 s after a finger is matched and the attendance punch is accepted (also after an enrollment finishes). Off otherwise. |
+| red "error" | GPIO26 | **solid on the whole time WiFi is disconnected**; a short burst on any other failure; a slow double-blink while fingerprint punching is switched off in the panel but WiFi is still up (tells people it's disabled, not broken). |
 
 ## Reset button — hold 5 s to re-provision
 
@@ -98,16 +98,27 @@ Hold it for 5 seconds during normal operation: all three LEDs come on, the
 saved WiFi networks + backend URL + device key are wiped, and the unit
 reboots straight into the captive portal.
 
-## Two WiFi networks with automatic failover
+You can also do the full wipe from the captive portal itself: the menu has an
+**"Erase ALL settings (WiFi + backend)"** button. WiFiManager's own *Erase*
+only clears the ESP32's saved WiFi credentials — the backend URL, device key
+and the second WiFi slot live in our own NVS namespace and would otherwise
+survive a portal erase, so the gate would reconnect to the old network on the
+next boot. Use our button (or the hardware button above) for a clean reset.
 
-- **Slot 1** is stored the first time you provision the gate.
-- If slot 1 is later unreachable, the gate reopens the portal; the network
-  you enter there is saved as **slot 2** (slot 1 is kept).
-- On every connect it tries **slot 1 first, then slot 2**, so it comes back
-  to the primary network on its own once that's available again.
-- If **both** are unreachable it reopens the portal for another network.
-- A full reset (button above) clears both slots; the next provision writes
-  slot 1 again.
+## Three WiFi networks, MRU order, automatic failover
+
+- The gate remembers the **last 3 networks it has connected to**, kept in
+  most-recently-used order (slot 1 = the network that worked last).
+- On every connect it tries **slot 1, then slot 2, then slot 3**, waiting
+  **15 s** on each.
+- Whichever slot connects is promoted back to slot 1 and the new order is
+  saved, so the gate keeps trying the network that actually works first.
+- Entering a network in the portal pushes it in at slot 1; the oldest of the
+  three drops off. Re-entering a known network just refreshes its password.
+- If none of the three are reachable, the gate reopens the portal for another
+  network.
+- A full reset (button above, or the portal's "Erase ALL settings") clears
+  all three slots.
 
 ## Power-outage behaviour
 
