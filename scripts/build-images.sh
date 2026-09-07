@@ -1,63 +1,112 @@
 #!/usr/bin/env bash
 #
-# ساخت ایمیج‌های داکرِ backend و web روی سیستمِ توسعه و بسته‌بندی‌شان (به‌همراه
-# ایمیج پایگاه داده) در یک فایل .tgz. این فایل را به سرور منتقل می‌کنید تا آنجا
-# فقط `docker load` + `docker compose up -d` اجرا شود — هیچ build کندی روی VPS.
+# Builds the two images that must be compiled — backend and web — HERE (a
+# development machine) and packs them into a single tarball to carry to the
+# server, so the server never has to build anything.
 #
-# استفاده:
-#   scripts/build-images.sh [TAG]
+# Why this exists: the frontend's Vite/TypeScript build wants well over 1 GB
+# of RAM and the face-recognition assets make it slow; on a small VPS (1 core,
+# little memory) building in place is slow at best and gets OOM-killed at
+# worst. Build where the resources are and ship the result.
 #
-# TAG پیش‌فرض: تاریخ‌وزمان (YYYYmmdd-HHMMSS). خروجی در پوشه‌ی release/.
+# Usage (on your own machine, from the project root):
+#   ./scripts/build-images.sh
+#   make images
 #
-# نیازمندی‌ها: Docker + افزونه‌ی docker compose v2 روی همین سیستم.
-
+# Options (environment variables):
+#   PLATFORM=linux/arm64          target architecture, if the server is not x86-64
+#   INCLUDE_BASE=1                also bundle postgres:16-alpine, for a server
+#                                that cannot pull from Docker Hub at all
+#   OUT=path/to/file.tar.gz       where to write the bundle
 set -euo pipefail
+
 cd "$(dirname "$0")/.."
 
-TAG="${1:-$(date +%Y%m%d-%H%M%S)}"
-OUT_DIR="release"
-BUNDLE="$OUT_DIR/attendance-images-$TAG.tgz"
+PLATFORM="${PLATFORM:-linux/amd64}"
+OUT="${OUT:-dist/attendance-images.tar.gz}"
+INCLUDE_BASE="${INCLUDE_BASE:-0}"
 
-PG_IMAGE="postgres:16-alpine"
-BACKEND_IMAGE="attendance-backend:$TAG"
-WEB_IMAGE="attendance-web:$TAG"
+# Kept in step with docker-compose.yml (image: attendance-backend:${IMAGE_TAG:-latest}).
+BASE_IMAGES=(postgres:16-alpine)
+IMAGES=(attendance-backend:latest attendance-web:latest)
 
-# VPS تقریباً همیشه linux/amd64 است؛ این خط باعث می‌شود روی مکِ Apple Silicon
-# هم ایمیجِ درست برای سرور ساخته شود (روی ویندوز/لینوکسِ x86 بی‌اثر است).
-export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+echo "==> Building images for ${PLATFORM}"
+echo ""
 
-command -v docker >/dev/null || { echo "خطا: docker نصب نیست." >&2; exit 1; }
+# compose interpolates the whole file before it will build anything, and a few
+# vars are declared required (SECRET_KEY, POSTGRES_PASSWORD, DOMAIN). Their
+# *values* never reach a build — they are runtime settings, nothing from them
+# is baked into an image — so a throwaway .env is enough and is cleaned up
+# afterwards, rather than making you create a real one on a machine that will
+# never run the stack.
+TEMP_ENV=0
+if [[ ! -f .env ]]; then
+  TEMP_ENV=1
+  cp .env.example .env
+  sed -i.bak \
+    -e 's|^SECRET_KEY=.*|SECRET_KEY=build-time-placeholder-not-used-at-runtime|' \
+    -e 's|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=build-time-placeholder|' \
+    -e 's|^DOMAIN=.*|DOMAIN=build.invalid|' \
+    .env && rm -f .env.bak
+  echo "    (using a temporary .env just to satisfy compose interpolation;"
+  echo "     nothing from it is baked into the images)"
+  echo ""
+fi
+cleanup() { [[ "$TEMP_ENV" == "1" ]] && rm -f .env; }
+trap cleanup EXIT
 
-# مستقیم با `docker build` می‌سازیم (نه `docker compose build`) تا نیازی به
-# .env و متغیرهای اجباریِ compose روی سیستم توسعه نباشد. نامِ ایمیج دقیقاً
-# همان چیزی است که compose روی سرور با IMAGE_TAG=$TAG انتظار دارد.
-echo "==> ساخت backend  ->  $BACKEND_IMAGE  (پلتفرم: $DOCKER_DEFAULT_PLATFORM)"
-docker build --pull -t "$BACKEND_IMAGE" ./backend
+DOCKER_DEFAULT_PLATFORM="$PLATFORM" docker compose build
 
-echo "==> ساخت web  ->  $WEB_IMAGE"
-docker build --pull -t "$WEB_IMAGE" ./frontend
+echo ""
+echo "==> Verifying the built images really are ${PLATFORM}"
+# A mismatch here does not fail the build; it produces images that load fine
+# on the server and then die at startup with a bare "exec format error" — a
+# confusing symptom to debug remotely. Cheaper to catch it now.
+want_os="${PLATFORM%%/*}"
+want_arch="${PLATFORM##*/}"
+for img in "${IMAGES[@]}"; do
+  got="$(docker image inspect "$img" --format '{{.Os}}/{{.Architecture}}')"
+  if [[ "$got" != "${want_os}/${want_arch}" ]]; then
+    echo "Error: ${img} is ${got}, but ${PLATFORM} was requested." >&2
+    echo "       Loading this on the server would fail at runtime with" >&2
+    echo "       \"exec format error\". Check your Docker buildx setup." >&2
+    exit 1
+  fi
+  echo "    ${img}: ${got}"
+done
 
-echo "==> دریافت ایمیج پایگاه داده ($PG_IMAGE)"
-docker pull "$PG_IMAGE"
+if [[ "$INCLUDE_BASE" == "1" ]]; then
+  echo ""
+  echo "==> Also pulling base images for ${PLATFORM} (INCLUDE_BASE=1)"
+  for img in "${BASE_IMAGES[@]}"; do
+    docker pull --platform "$PLATFORM" "$img"
+  done
+  IMAGES+=("${BASE_IMAGES[@]}")
+fi
 
-mkdir -p "$OUT_DIR"
-echo "==> ذخیره‌ی سه ایمیج و فشرده‌سازی در  $BUNDLE"
-docker save "$BACKEND_IMAGE" "$WEB_IMAGE" "$PG_IMAGE" | gzip > "$BUNDLE"
+echo ""
+echo "==> Packing into ${OUT}"
+mkdir -p "$(dirname "$OUT")"
+# gzip -1: image layers are mostly already-compressed content, so the higher
+# levels cost a lot of time for very little extra saving.
+docker save "${IMAGES[@]}" | gzip -1 > "$OUT"
 
-echo "$TAG" > "$OUT_DIR/latest-tag.txt"
-SIZE="$(du -h "$BUNDLE" | cut -f1)"
-
-cat <<EOF
-
-  بسته آماده شد:  $BUNDLE   ($SIZE)
-  تگ ایمیج‌ها:     $TAG
-
-  مرحله‌ی بعد — انتقال به سرور و استقرار (بدون build):
-
-    scp "$BUNDLE" scripts/deploy-images.sh docker-compose.yml USER@HOST:/opt/attendance/
-    ssh USER@HOST 'cd /opt/attendance && bash deploy-images.sh attendance-images-$TAG.tgz'
-
-  یا همه‌ی این‌ها در یک فرمان از همین سیستم:
-
-    scripts/release.sh USER@HOST[:/opt/attendance] $TAG
-EOF
+size="$(du -h "$OUT" | cut -f1)"
+echo ""
+echo "================================================================"
+echo " Built: ${size}  ->  ${OUT}"
+echo "================================================================"
+echo ""
+echo "Next, copy it to the server and load it there:"
+echo ""
+echo "  scp ${OUT} YOUR_USER@YOUR_SERVER:/opt/attendance/"
+echo "  ssh YOUR_USER@YOUR_SERVER"
+echo "  cd /opt/attendance && ./scripts/load-images.sh"
+echo ""
+if [[ "$INCLUDE_BASE" != "1" ]]; then
+  echo "This bundle contains only the two images that must be built. postgres is"
+  echo "pulled from Docker Hub on the server (postgres:16-alpine is very likely"
+  echo "already there if another project uses it). If the server cannot reach"
+  echo "Docker Hub at all, rebuild with INCLUDE_BASE=1 to bundle it too."
+  echo ""
+fi

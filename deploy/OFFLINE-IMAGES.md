@@ -1,78 +1,81 @@
-# استقرار با ایمیج‌های از پیش ساخته‌شده (بدون build روی سرور)
+# Building elsewhere (prebuilt images, no build on the VPS)
 
-وقتی build روی VPS کند است، ایمیج‌ها را روی سیستمِ توسعه بساز، در یک فایل
-`.tgz` بسته‌بندی کن، به سرور منتقل کن و آنجا فقط بارگذاری + راه‌اندازی کن.
+The frontend build wants well over 1 GB of RAM and is slow because of the
+face-recognition assets. On a small VPS (1 core, little memory) building in
+place is slow at best and gets OOM-killed at worst. Build the images on a
+machine that has the resources, carry a single tarball to the server, and
+there only load and start them.
 
-سه ایمیج داخل بسته است: `attendance-backend`، `attendance-web` و
-`postgres:16-alpine` (تا سرور به Docker Hub هم نیاز نداشته باشد).
-
----
-
-## راه ساده: یک فرمان از سیستم توسعه
-
-نیازمندی: دسترسی `ssh` با کلید به سرور، و اینکه پروژه از قبل روی سرور در
-`/opt/attendance` با `.env` معتبر مستقر شده باشد.
-
-```bash
-make release HOST=root@SERVER_IP           # مسیر پیش‌فرض: /opt/attendance
-# یا
-make release HOST=root@SERVER_IP DIR=/srv/attendance TAG=20260907-1400
-```
-
-این کار به‌ترتیب: ایمیج‌ها را می‌سازد → `release/attendance-images-<TAG>.tgz`
-را با `docker-compose.yml` و `scripts/deploy-images.sh` به سرور کپی می‌کند →
-روی سرور `docker load` + `docker compose up -d` می‌زند.
+The tarball holds the two images that must be compiled — `attendance-backend`
+and `attendance-web`. `postgres:16-alpine` is pulled from Docker Hub on the
+server (it is very likely already present if another project uses it); pass
+`INCLUDE_BASE=1` to bundle it too if the server cannot reach Docker Hub.
 
 ---
 
-## راه دستی (اگر ssh مستقیم نداری)
-
-### ۱) روی سیستم توسعه
+## On your machine
 
 ```bash
-make images                 # یا: make images TAG=20260907-1400
+make images
+# -> dist/attendance-images.tar.gz
 ```
 
-خروجی: `release/attendance-images-<TAG>.tgz`
+Options (environment variables):
 
-### ۲) انتقال به سرور
+| var | default | meaning |
+|---|---|---|
+| `PLATFORM` | `linux/amd64` | target arch — set `linux/arm64` for an ARM VPS |
+| `INCLUDE_BASE` | `0` | also bundle `postgres:16-alpine` |
+| `OUT` | `dist/attendance-images.tar.gz` | bundle path |
+
+The script verifies the built images actually match `PLATFORM` before packing
+(an arch mismatch otherwise only surfaces as `exec format error` at container
+start on the server).
+
+Copy it over:
 
 ```bash
-scp release/attendance-images-<TAG>.tgz \
-    scripts/deploy-images.sh \
-    docker-compose.yml \
-    root@SERVER_IP:/opt/attendance/
+scp dist/attendance-images.tar.gz USER@SERVER:/opt/attendance/
 ```
 
-> `docker-compose.yml` را هم بفرست تا نسخه‌اش با ایمیج‌ها بخواند. `.env` روی
-> سرور دست‌نخورده می‌ماند.
+---
 
-### ۳) روی سرور
+## On the server
 
 ```bash
 cd /opt/attendance
-bash deploy-images.sh attendance-images-<TAG>.tgz
-# یا:  make deploy-offline BUNDLE=attendance-images-<TAG>.tgz
+make load-images        # gunzip | docker load, then re-checks the architecture
 ```
 
-اسکریپت: ایمیج‌ها را load می‌کند، `IMAGE_TAG=<TAG>` را در `.env` می‌نویسد و
-`docker compose up -d --no-build` می‌زند. دیتابیس و حجم `media` دست‌نخورده
-می‌مانند.
+Then, depending on whether the server is already set up:
+
+**First-time setup** (no `.env` yet, needs the SSL step):
+
+```bash
+./scripts/bootstrap-vps.sh
+```
+
+It sees the loaded `attendance-backend:latest` / `attendance-web:latest` and
+runs `make up-prebuilt` instead of building.
+
+**Already deployed** (just shipping a new build):
+
+```bash
+make up-prebuilt        # docker compose up -d --no-build
+```
+
+The database and the `media` volume are untouched. To roll back, keep the old
+`dist/attendance-images.tar.gz`, `docker load` it again, and `make up-prebuilt`.
 
 ---
 
-## نکته‌ها
+## Notes
 
-- **معماری:** ایمیج‌ها `linux/amd64` ساخته می‌شوند (پیش‌فرضِ اسکریپت). برای
-  VPSِ ARM مقدار `DOCKER_DEFAULT_PLATFORM=linux/arm64` را قبل از `make images`
-  ست کن.
-- **مهاجرت پایگاه داده:** این پروژه جدول‌ها را هنگام بالا آمدن می‌سازد
-  (`create_all`) ولی ستون‌های جدید را به جدولِ موجود اضافه نمی‌کند. اگر نسخه‌ای
-  ستون تازه‌ای به مدل اضافه کرد، `ALTER TABLE` دستی لازم است (در docstringِ
-  همان سرویس نوشته می‌شود).
-- **عقب‌گرد:** بسته‌های `release/*.tgz` را نگه دار. برای برگشتن به نسخه‌ی قبل،
-  همان `deploy-images.sh` را با فایلِ قدیمی‌تر اجرا کن.
-- **SSL / nginx میزبان:** بدون تغییر است. `make ssl` فقط بارِ اول یا هنگام
-  عوض‌شدن دامنه لازم است.
-- **`make deploy` / `make update`** مثل قبل کار می‌کنند و خودشان build می‌زنند؛
-  این مسیرِ آفلاین جایگزینِ اختیاری است، نه اجباری.
+- **`make deploy` / `make update` are unchanged** — they still build on the
+  box they run on. This prebuilt path is an alternative, not a replacement.
+- **DB schema:** the backend creates missing tables at startup but does not
+  `ALTER` existing ones. A release that adds a column to an existing table
+  needs a one-off `ALTER TABLE` (noted in that service's docstring when it
+  happens).
+- **Host nginx / SSL** is not affected by any of this. `make ssl` is only
+  needed the first time or when the domain changes.

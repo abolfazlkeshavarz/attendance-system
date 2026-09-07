@@ -30,6 +30,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck disable=SC1091
+source scripts/lib.sh
+
 # ------------------------------------------------------------- elevate to root
 if [[ "$(id -u)" != "0" ]]; then
   echo "==> Root access is required to install Docker; re-running with sudo"
@@ -101,14 +104,20 @@ fi
 : "${DOMAIN:?DOMAIN is required}"
 : "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL is required}"
 
-if [[ -z "${APP_HTTP_PORT:-}" ]] && [[ -d /etc/nginx || -x /usr/sbin/nginx ]]; then
-  echo ""
-  echo "nginx is already on this server, which usually means another project"
-  echo "is already deployed here. This app's containers must publish their"
-  echo "local port on a number no other project uses (default: 8081)."
-  read -r -p "Local port for this app [8081]: " APP_HTTP_PORT
+if [[ -z "${APP_HTTP_PORT:-}" ]]; then
+  # Pick the first free loopback port automatically instead of making the
+  # operator guess one — the web container only needs a private port for the
+  # host nginx to proxy to (see scripts/deploy-host-nginx.sh).
+  APP_HTTP_PORT="$(find_free_port 8081)"
+  if [[ -d /etc/nginx || -x /usr/sbin/nginx ]]; then
+    echo ""
+    echo "nginx is already on this server (another project is likely deployed"
+    echo "here). This app will publish its local port on 127.0.0.1:${APP_HTTP_PORT}"
+    echo "(auto-picked as free). Press Enter to accept, or type another number:"
+    read -r -p "Local port for this app [${APP_HTTP_PORT}]: " reply
+    APP_HTTP_PORT="${reply:-$APP_HTTP_PORT}"
+  fi
 fi
-APP_HTTP_PORT="${APP_HTTP_PORT:-8081}"
 
 # ------------------------------------------------------------------- .env
 echo "==> Creating .env file"
@@ -125,8 +134,22 @@ if [[ "$REAL_USER" != "root" ]]; then
 fi
 
 # --------------------------------------------------------------- deploy
-echo "==> Building images and bringing the system up"
-make deploy
+#
+# If the images are already here — loaded from a tarball built on a bigger
+# machine (scripts/load-images.sh) — don't rebuild them. The frontend build
+# wants well over 1 GB of RAM, which a small VPS may not have, so on those the
+# whole point is to never build here.
+if docker image inspect attendance-backend:latest >/dev/null 2>&1 \
+   && docker image inspect attendance-web:latest >/dev/null 2>&1; then
+  echo "==> Prebuilt images found; skipping the build"
+  make up-prebuilt
+else
+  echo "==> Building images and bringing the system up"
+  echo "    On a small server this can be slow, and the frontend build may run"
+  echo "    out of memory. If it fails, build on a bigger machine instead and"
+  echo "    load the tarball — see deploy/OFFLINE-IMAGES.md."
+  make deploy
+fi
 
 echo "==> Obtaining SSL certificate from Let's Encrypt"
 make ssl

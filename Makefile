@@ -298,25 +298,31 @@ update: check-env ## Pull latest code, rebuild and restart
 	$(COMPOSE) up -d
 	@$(COMPOSE) ps
 
-# ------------------------------- offline images (build here, ship to a slow VPS)
+# --------------------------- prebuilt images (build on a dev machine, not the VPS)
 #
-# The VPS is slow to build. Instead: build both images on your dev machine,
-# bundle them into one release/*.tgz, copy it over, and just `docker load`
-# + `up -d` there — no build on the server.
+# The frontend build wants >1 GB RAM and is slow; a small VPS struggles or
+# OOM-kills it. Build the images where the resources are, ship a tarball, and
+# only load + start on the server.
+#
+#   dev machine:   make images                    -> dist/attendance-images.tar.gz
+#                  scp dist/attendance-images.tar.gz USER@SERVER:/opt/attendance/
+#   server:        make load-images               (load + architecture check)
+#                  make up-prebuilt               (start, never build)
+#                  (or ./scripts/bootstrap-vps.sh on a first-time setup — it
+#                   detects the loaded images and skips the build automatically)
 
 .PHONY: images
-images: ## [dev PC] Build backend+web images and bundle them into release/*.tgz. Optional TAG=...
-	@bash scripts/build-images.sh $(TAG)
+images: ## [dev machine] Build backend+web images and pack them into dist/attendance-images.tar.gz
+	@bash scripts/build-images.sh
 
-.PHONY: release
-release: ## [dev PC] Build here, copy to the server, deploy there (no VPS build). HOST=user@host [DIR=/opt/attendance] [TAG=...]
-	@test -n "$(HOST)" || { echo "Usage: make release HOST=user@server [DIR=/opt/attendance] [TAG=20260907-1200]"; exit 1; }
-	@bash scripts/release.sh "$(HOST)$(if $(DIR),:$(DIR),)" $(TAG)
+.PHONY: load-images
+load-images: ## [server] Load a copied-over image tarball and check its architecture
+	@bash scripts/load-images.sh $(BUNDLE)
 
-.PHONY: deploy-offline
-deploy-offline: check-env ## [server] Load a transferred bundle and start, no build. BUNDLE=attendance-images-*.tgz
-	@test -n "$(BUNDLE)" || { echo "Usage: make deploy-offline BUNDLE=attendance-images-YYYYmmdd-HHMMSS.tgz"; exit 1; }
-	@bash scripts/deploy-images.sh "$(BUNDLE)"
+.PHONY: up-prebuilt
+up-prebuilt: check-env ## [server] Start the stack from already-loaded images, never building
+	$(COMPOSE) up -d --no-build --remove-orphans
+	@$(COMPOSE) ps
 
 .PHONY: status
 status: check-compose ## Services status
