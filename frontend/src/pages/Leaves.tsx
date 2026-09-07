@@ -24,6 +24,7 @@ const LEAVE_TYPES = [
   { value: 'daily', label: 'مرخصی روزانه' },
   { value: 'hourly', label: 'مرخصی ساعتی' },
   { value: 'sick', label: 'استعلاجی' },
+  { value: 'emergency', label: 'اضطراری' },
   { value: 'mission', label: 'مأموریت' },
   { value: 'unpaid', label: 'بدون حقوق' },
 ]
@@ -113,7 +114,7 @@ export default function Leaves() {
       <Card>
         <SectionTitle
           title="مرخصی‌ها و مأموریت‌ها"
-          subtitle="مرخصی تأییدشده در گزارش‌ها به‌جای «غایب»، «مرخصی» ثبت می‌شود"
+          subtitle="مرخصی تأییدشده در گزارش‌ها به‌جای «غایب»، «مرخصی» ثبت می‌شود · پرسنل می‌توانند از صفحهٔ عمومی /leave-request (با QR) خودشان درخواست بدهند"
           action={
             editable && (
               <button className="btn-primary" onClick={() => setFormOpen(true)}>
@@ -184,7 +185,12 @@ export default function Leaves() {
                   <td>
                     <StatusBadge status={leave.status} label={leave.status_fa} />
                   </td>
-                  <td className="max-w-48 truncate text-ink-500">{leave.reason ?? '—'}</td>
+                  <td
+                    className="max-w-48 truncate text-ink-500"
+                    title={leave.reason ?? undefined}
+                  >
+                    {leave.reason ?? '—'}
+                  </td>
                   {editable && (
                     <td>
                       <div className="flex items-center justify-center gap-1">

@@ -50,9 +50,10 @@ class DayStatus(StrEnum):
 
 
 class LeaveType(StrEnum):
-    DAILY = "daily"          # مرخصی روزانه
+    DAILY = "daily"          # مرخصی روزانه (استحقاقی)
     HOURLY = "hourly"        # مرخصی ساعتی
-    SICK = "sick"            # استعلاجی
+    SICK = "sick"            # استعلاجی / پزشکی
+    EMERGENCY = "emergency"  # اضطراری
     MISSION = "mission"      # مأموریت
     UNPAID = "unpaid"        # بدون حقوق
 
@@ -91,7 +92,8 @@ FA_LABELS: dict[str, str] = {
     "manual": "ثبت دستی", "admin_fix": "اصلاح مدیر",
     "present": "حاضر", "absent": "غایب", "leave": "مرخصی", "mission": "مأموریت",
     "holiday": "تعطیل رسمی", "weekend": "تعطیل هفتگی", "incomplete": "ناقص",
-    "daily": "روزانه", "hourly": "ساعتی", "sick": "استعلاجی", "unpaid": "بدون حقوق",
+    "daily": "روزانه", "hourly": "ساعتی", "sick": "استعلاجی", "emergency": "اضطراری",
+    "unpaid": "بدون حقوق",
     "pending": "در انتظار تأیید", "approved": "تأیید شده", "rejected": "رد شده",
     "failed": "شکست خورد",
     "todo": "انجام نشده", "in_progress": "در حال انجام", "done": "انجام شد",

@@ -140,6 +140,54 @@ class LeaveCreate(BaseModel):
     reason: str | None = None
 
 
+class PublicEmployeeInfo(BaseModel):
+    """پاسخ جست‌وجوی کد پرسنلی در فرم عمومی درخواست مرخصی."""
+
+    personnel_code: str
+    full_name: str
+
+
+class PublicLeaveRequest(BaseModel):
+    """درخواست مرخصی که خودِ پرسنل از صفحهٔ عمومی (QR) ثبت می‌کند.
+
+    توضیحات اجباری است؛ درخواست در وضعیت «در انتظار تأیید» ساخته می‌شود و تا
+    تأیید مدیر در گزارش‌ها اثری ندارد.
+    """
+
+    personnel_code: str = Field(min_length=1, max_length=32)
+    leave_type: str = "daily"
+    start_jalali_date: str
+    end_jalali_date: str
+    start_clock: str | None = None
+    end_clock: str | None = None
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("personnel_code")
+    @classmethod
+    def _trim_code(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("کد پرسنلی الزامی است")
+        return v
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_required(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 5:
+            raise ValueError("نوشتن توضیحات الزامی است (حداقل ۵ نویسه)")
+        return v
+
+
+class PublicLeaveResult(BaseModel):
+    ok: bool = True
+    employee_name: str
+    leave_type_fa: str
+    start_jalali: str
+    end_jalali: str
+    message: str = "درخواست شما ثبت شد و در انتظار تأیید مدیر است."
+
+
 class LeaveUpdate(BaseModel):
     status: str | None = None
     review_note: str | None = None

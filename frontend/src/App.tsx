@@ -13,6 +13,7 @@ import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 
 const Kiosk = lazy(() => import('./kiosk/Kiosk'))
+const LeaveRequestPublic = lazy(() => import('./pages/LeaveRequestPublic'))
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -36,6 +37,16 @@ export default function App() {
         element={
           <Suspense fallback={<LoadingBlock label="در حال آماده‌سازی تبلت…" />}>
             <Kiosk />
+          </Suspense>
+        }
+      />
+
+      {/* فرم عمومی درخواست مرخصی — بدون ورود، قابل اسکن با QR */}
+      <Route
+        path="/leave-request"
+        element={
+          <Suspense fallback={<LoadingBlock label="در حال بارگذاری فرم…" />}>
+            <LeaveRequestPublic />
           </Suspense>
         }
       />

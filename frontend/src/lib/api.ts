@@ -41,6 +41,9 @@ export const api: AxiosInstance = axios.create({ baseURL: API_BASE, timeout: 30_
 /** کلاینت تبلت — با کلید دستگاه. */
 export const kioskApi: AxiosInstance = axios.create({ baseURL: API_BASE, timeout: 20_000 })
 
+/** کلاینت صفحه‌های عمومی (فرم درخواست مرخصی با QR) — بدون هیچ احراز هویتی. */
+export const publicApi: AxiosInstance = axios.create({ baseURL: API_BASE, timeout: 20_000 })
+
 api.interceptors.request.use((config) => {
   const token = tokens.access
   if (token) config.headers.Authorization = `Bearer ${token}`

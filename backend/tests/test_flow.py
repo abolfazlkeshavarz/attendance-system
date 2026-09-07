@@ -303,6 +303,75 @@ def test_leave_marks_absence_as_leave(client, admin_headers):
     assert row2["status"] in ("leave", "weekend", "holiday")
 
 
+def test_public_leave_request_flow(client, admin_headers):
+    """فرم عمومی: پرسنل بدون ورود درخواست می‌دهد، مدیر تأیید می‌کند، در گزارش می‌آید."""
+    emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "3003", "first_name": "مریم", "last_name": "حسینی"},
+    ).json()
+    shifts = client.get(f"{API}/org/shifts", headers=admin_headers).json()
+    office = next(s for s in shifts if s["name"] == "شیفت اداری")
+    client.patch(
+        f"{API}/employees/{emp['id']}", headers=admin_headers, json={"shift_id": office["id"]}
+    )
+
+    # جست‌وجوی کد پرسنلی — بدون هدر احراز هویت
+    who = client.get(f"{API}/leaves/public/employee/3003")
+    assert who.status_code == 200
+    assert who.json()["full_name"] == "مریم حسینی"
+    assert client.get(f"{API}/leaves/public/employee/000000").status_code == 404
+
+    today = today_tehran()
+    body = {
+        "personnel_code": "3003",
+        "leave_type": "emergency",
+        "start_jalali_date": jalali_str(today),
+        "end_jalali_date": jalali_str(today),
+        "reason": "مورد فوری خانوادگی",
+    }
+
+    # توضیحات اجباری است
+    bad = client.post(f"{API}/leaves/public", json={**body, "reason": "  "})
+    assert bad.status_code == 422
+
+    # کد پرسنلی نامعتبر
+    assert client.post(f"{API}/leaves/public", json={**body, "personnel_code": "999"}).status_code == 404
+
+    ok = client.post(f"{API}/leaves/public", json=body)
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["employee_name"] == "مریم حسینی"
+    assert ok.json()["leave_type_fa"] == "اضطراری"
+
+    # درخواست تکراری روی همان بازه رد می‌شود
+    dup = client.post(f"{API}/leaves/public", json=body)
+    assert dup.status_code == 409
+
+    # مدیر آن را در فهرست «در انتظار تأیید» می‌بیند
+    pending = client.get(
+        f"{API}/leaves", headers=admin_headers, params={"status": "pending", "employee_id": emp["id"]}
+    ).json()
+    assert len(pending) == 1
+    leave_id = pending[0]["id"]
+    assert pending[0]["leave_type"] == "emergency"
+    assert pending[0]["reason"] == "مورد فوری خانوادگی"
+
+    # تا تأیید نشده، در گزارش غیبت است
+    daily = client.get(
+        f"{API}/reports/daily", headers=admin_headers, params={"jalali_date": jalali_str(today)}
+    ).json()
+    row = next(r for r in daily["items"] if r["personnel_code"] == "3003")
+    assert row["status"] in ("absent", "weekend", "holiday")
+
+    client.patch(f"{API}/leaves/{leave_id}", headers=admin_headers, json={"status": "approved"})
+
+    daily2 = client.get(
+        f"{API}/reports/daily", headers=admin_headers, params={"jalali_date": jalali_str(today)}
+    ).json()
+    row2 = next(r for r in daily2["items"] if r["personnel_code"] == "3003")
+    assert row2["status"] in ("leave", "weekend", "holiday")
+
+
 def test_tasks_lifecycle(client, admin_headers, employee):
     today = today_tehran()
     task = client.post(
