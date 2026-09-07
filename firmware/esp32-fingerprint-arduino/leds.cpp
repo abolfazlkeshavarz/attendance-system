@@ -11,6 +11,12 @@ constexpr unsigned long kSuccessHoldMs = 2000;  // green solid after a successfu
 constexpr unsigned long kErrorBurstMs = 600;
 constexpr unsigned long kDisabledPeriodMs = 3000;  // red double-blink cadence when disabled
 
+// "finger not recognised": 5 fast red blinks. 100 ms on + 200 ms off = 300 ms
+// per blink -> 1500 ms total, comfortably inside the 2 s the gate stays busy.
+constexpr unsigned long kRejectOnMs = 100;
+constexpr unsigned long kRejectPeriodMs = 300;
+constexpr int kRejectBlinks = 5;
+
 bool g_ready = true;      // gate healthy + ready to scan -> blue solid
 bool g_wifiDown = false;  // Wi-Fi disconnected -> red solid
 
@@ -25,6 +31,10 @@ unsigned long g_successUntil = 0;
 // red "error" one-shot burst
 bool g_errorBurst = false;
 unsigned long g_errorBurstStart = 0;
+
+// red "reject" burst: 5 fast blinks (finger not recognised)
+bool g_reject = false;
+unsigned long g_rejectStart = 0;
 
 void write(int pin, bool on) { digitalWrite(pin, on ? HIGH : LOW); }
 
@@ -57,10 +67,17 @@ void setWifiDown(bool down) {
 }
 
 void scanStart() {
+  g_reject = false;  // a real read is happening now — drop any reject blink
   g_scanning = true;
   g_scanToggleAt = millis();
   g_scanLevel = true;
   write(kPinReady, true);
+}
+
+void scanReject() {
+  g_reject = true;
+  g_rejectStart = millis();
+  write(kPinError, true);
 }
 
 void scanSuccess() {
@@ -114,7 +131,15 @@ void tick() {
   }
 
   // ---- red "error" channel -------------------------------------------
-  if (g_errorBurst) {
+  if (g_reject) {
+    unsigned long e = now - g_rejectStart;
+    if (e >= kRejectPeriodMs * (unsigned long)kRejectBlinks) {
+      g_reject = false;
+      write(kPinError, false);
+    } else {
+      write(kPinError, (e % kRejectPeriodMs) < kRejectOnMs);
+    }
+  } else if (g_errorBurst) {
     if (now - g_errorBurstStart >= kErrorBurstMs) {
       g_errorBurst = false;
       write(kPinError, false);

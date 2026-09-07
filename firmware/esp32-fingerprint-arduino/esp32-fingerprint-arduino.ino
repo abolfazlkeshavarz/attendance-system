@@ -1,3 +1,5 @@
+#include <HTTPClient.h>
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -70,6 +72,9 @@ bool g_fingerprintEnabled = true;
 uint16_t g_lastSlot = 0xFFFF;
 unsigned long g_lastSlotMs = 0;
 unsigned long g_resetPressStart = 0;
+// Latches while an unrecognised finger stays on the sensor so the "not
+// recognised" red blink fires once per press, not every loop iteration.
+bool g_unknownFinger = false;
 
 // ------------------------------------------------------------- watchdog
 
@@ -543,8 +548,22 @@ void loop() {
         g_lastQueueFlush = now;
       }
       uint16_t slot, confidence;
-      if (g_sensor.search(slot, confidence)) {
-        handleMatch(slot, confidence);
+      switch (g_sensor.search(slot, confidence)) {
+        case FingerprintSensor::Scan::kMatch:
+          g_unknownFinger = false;
+          handleMatch(slot, confidence);
+          break;
+        case FingerprintSensor::Scan::kNoMatch:
+          if (!g_unknownFinger) {
+            g_unknownFinger = true;  // fire the feedback once per finger press
+            Serial.println("[scan] finger not recognized");
+            oled::log("finger not recognized");
+            led::scanReject();  // red: 5 fast blinks over ~1.5 s
+          }
+          break;
+        case FingerprintSensor::Scan::kNone:
+          g_unknownFinger = false;  // finger lifted — re-arm for the next press
+          break;
       }
       break;
     }

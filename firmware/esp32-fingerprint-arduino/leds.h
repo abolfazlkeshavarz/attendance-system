@@ -46,7 +46,8 @@ void setWifiDown(bool down);
 
 void scanStart();    // blue: very fast blink (a finger is being read)
 void scanSuccess();  // green: solid for 2 s; blue returns to the ready state
-void scanError();    // red: short burst
+void scanReject();   // red: 5 fast blinks over ~1.5 s — finger not recognised / not enrolled
+void scanError();    // red: short single burst — an operation failed (e.g. enrolment)
 void clearScan();    // blue back to ready state (scan aborted, no result)
 
 // All three solid on — used as a visible "wiping config / rebooting" cue.

@@ -32,9 +32,14 @@ class FingerprintSensor {
   bool verify();
   uint16_t capacity() const { return capacity_; }
 
-  // Call every loop iteration. Returns true only when a finger was present
-  // AND matched something already enrolled on this sensor.
-  bool search(uint16_t &slotId, uint16_t &confidence);
+  enum class Scan {
+    kNone,     // no finger on the sensor (or still settling)
+    kNoMatch,  // a finger was read cleanly but matched no enrolled slot
+    kMatch,    // a finger matched an enrolled slot (slotId/confidence set)
+  };
+
+  // Call every loop iteration.
+  Scan search(uint16_t &slotId, uint16_t &confidence);
 
   // Blocking: walks the two-scan enrollment sequence
   // (getImage -> image2Tz(1) -> getImage -> image2Tz(2) -> createModel ->

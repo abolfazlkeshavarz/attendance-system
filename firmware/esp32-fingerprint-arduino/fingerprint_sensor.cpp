@@ -101,13 +101,21 @@ bool FingerprintSensor::verify() {
   return true;
 }
 
-bool FingerprintSensor::search(uint16_t &slotId, uint16_t &confidence) {
-  if (finger_->getImage() != FINGERPRINT_OK) return false;
-  if (finger_->image2Tz(1) != FINGERPRINT_OK) return false;
-  if (finger_->fingerFastSearch() != FINGERPRINT_OK) return false;
+FingerprintSensor::Scan FingerprintSensor::search(uint16_t &slotId, uint16_t &confidence) {
+  // No finger, or a transient imaging error — nothing to report either way.
+  if (finger_->getImage() != FINGERPRINT_OK) return Scan::kNone;
+  // Got an image but couldn't turn it into features: finger half-on / moving.
+  // Treat as "nothing yet" so the next loop can retry without a reject blink.
+  if (finger_->image2Tz(1) != FINGERPRINT_OK) return Scan::kNone;
+  // Clean read that matched nothing on this sensor -> unknown / unregistered.
+  if (finger_->fingerFastSearch() != FINGERPRINT_OK) {
+    slotId = 0;
+    confidence = 0;
+    return Scan::kNoMatch;
+  }
   slotId = finger_->fingerID;
   confidence = finger_->confidence;
-  return true;
+  return Scan::kMatch;
 }
 
 bool FingerprintSensor::enrollAtSlot(uint16_t slot, void (*onStep)(const char *msg)) {

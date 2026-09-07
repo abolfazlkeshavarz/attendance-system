@@ -89,7 +89,7 @@ sits on GPIO27, the pin the buzzer used to use — there is no buzzer anymore.
 |---|---|---|
 | blue "ready" | GPIO27 | **solid on** whenever the gate is healthy and ready to scan — stays on after a successful scan too. Blinks very fast while a finger is being read. Off when the gate is not ready (disabled from the panel, or WiFi down). |
 | green "success" | GPIO25 | solid for 2 s after a finger is matched and the attendance punch is accepted (also after an enrollment finishes). Off otherwise. |
-| red "error" | GPIO26 | **solid on the whole time WiFi is disconnected**; a short burst on any other failure; a slow double-blink while fingerprint punching is switched off in the panel but WiFi is still up (tells people it's disabled, not broken). |
+| red "error" | GPIO26 | **5 fast blinks (~1.5 s)** when a finger is read but matches nobody enrolled ("not recognised"); **solid on the whole time WiFi is disconnected**; a short single burst on any other failure; a slow double-blink while fingerprint punching is switched off in the panel but WiFi is still up (tells people it's disabled, not broken). |
 
 ## Reset button — hold 5 s to re-provision
 

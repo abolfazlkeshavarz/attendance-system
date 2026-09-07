@@ -52,3 +52,6 @@ code-summary.txt
 
 # پشتیبان‌ها
 backups/
+
+# Firmware build output (Arduino CLI / IDE)
+firmware/**/build/
