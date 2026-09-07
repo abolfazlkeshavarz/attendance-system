@@ -1,0 +1,14 @@
+# این‌ها نباید وارد بستر ساختِ ایمیج شوند: هم کندش می‌کنند هم بی‌اثرند
+# (npm ci خودش node_modules را می‌سازد، npm run build خودش dist را).
+node_modules
+dist
+dist-ssr
+.vite
+.git
+.gitignore
+*.local
+Dockerfile
+.dockerignore
+release
+coverage
+.DS_Store

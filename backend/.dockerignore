@@ -1,0 +1,23 @@
+# بستر ساخت را سبک نگه می‌دارد. Dockerfile فقط requirements.txt و app/ و
+# scripts/ را کپی می‌کند، ولی این‌ها هم نباید حتی وارد بستر شوند.
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+_*.db
+tests
+.git
+.gitignore
+Dockerfile
+.dockerignore
+app/static/faces/*
+app/static/snapshots/*
+!app/static/faces/.gitkeep
+!app/static/snapshots/.gitkeep

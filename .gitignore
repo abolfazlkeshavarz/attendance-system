@@ -55,3 +55,6 @@ backups/
 
 # Firmware build output (Arduino CLI / IDE)
 firmware/**/build/
+
+# بسته‌های ایمیجِ آفلاین (scripts/build-images.sh)
+release/

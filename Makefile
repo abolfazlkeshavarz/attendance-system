@@ -298,6 +298,26 @@ update: check-env ## Pull latest code, rebuild and restart
 	$(COMPOSE) up -d
 	@$(COMPOSE) ps
 
+# ------------------------------- offline images (build here, ship to a slow VPS)
+#
+# The VPS is slow to build. Instead: build both images on your dev machine,
+# bundle them into one release/*.tgz, copy it over, and just `docker load`
+# + `up -d` there — no build on the server.
+
+.PHONY: images
+images: ## [dev PC] Build backend+web images and bundle them into release/*.tgz. Optional TAG=...
+	@bash scripts/build-images.sh $(TAG)
+
+.PHONY: release
+release: ## [dev PC] Build here, copy to the server, deploy there (no VPS build). HOST=user@host [DIR=/opt/attendance] [TAG=...]
+	@test -n "$(HOST)" || { echo "Usage: make release HOST=user@server [DIR=/opt/attendance] [TAG=20260907-1200]"; exit 1; }
+	@bash scripts/release.sh "$(HOST)$(if $(DIR),:$(DIR),)" $(TAG)
+
+.PHONY: deploy-offline
+deploy-offline: check-env ## [server] Load a transferred bundle and start, no build. BUNDLE=attendance-images-*.tgz
+	@test -n "$(BUNDLE)" || { echo "Usage: make deploy-offline BUNDLE=attendance-images-YYYYmmdd-HHMMSS.tgz"; exit 1; }
+	@bash scripts/deploy-images.sh "$(BUNDLE)"
+
 .PHONY: status
 status: check-compose ## Services status
 	@$(COMPOSE) ps

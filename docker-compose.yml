@@ -19,6 +19,11 @@ services:
     # پایگاه داده هیچ پورتی به بیرون باز نمی‌کند؛ فقط از شبکه داخلی در دسترس است
 
   backend:
+    # نام ایمیجِ خروجی ثابت است تا بتوان آن را روی سیستم توسعه ساخت،
+    # با scripts/build-images.sh در یک .tgz بسته‌بندی کرد و روی سرور فقط
+    # `docker load` + `up -d` زد (بدون build کندِ VPS). IMAGE_TAG را
+    # scripts/deploy-images.sh در .env می‌نویسد؛ نبودنش یعنی ساخت محلی.
+    image: attendance-backend:${IMAGE_TAG:-local}
     build:
       context: ./backend
     restart: unless-stopped
@@ -45,6 +50,7 @@ services:
       - media:/app/app/static
 
   web:
+    image: attendance-web:${IMAGE_TAG:-local}
     build:
       context: ./frontend
     restart: unless-stopped
