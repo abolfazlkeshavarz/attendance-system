@@ -12,6 +12,15 @@ class BackendClient {
  public:
   BackendClient(String host, String deviceKey);
 
+  // HTTP status of the last request() call: 0 if it never got a response at
+  // all (DNS/TCP/TLS failure or timeout), otherwise the server's status
+  // code. Lets a caller tell "the device key was rejected" (401 — most
+  // often a stale key: the portal was reprovisioned with a new one but the
+  // backend still expects the one this key replaced, or a typo) apart from
+  // "the network/server is just unreachable right now".
+  int lastStatus() const { return lastStatus_; }
+  bool deviceKeyRejected() const { return lastStatus_ == 401; }
+
   bool handshake(JsonDocument &out);
   bool heartbeat(int pendingCount, const String &appVersion);
 
@@ -26,10 +35,13 @@ class BackendClient {
   bool syncConfirm(JsonVariantConst added, JsonVariantConst removedEmployeeIds);
 
   // connectTimeoutMs / readTimeoutMs let the caller trade delivery odds for
-  // latency. The live punch on a finger press passes tight values so the
-  // gate is ready again within ~3 s even if the server is slow (it just
-  // falls back to the offline queue); the queue flush uses the generous
-  // defaults since nobody is waiting at the gate for it.
+  // latency. The live punch on a finger press passes tighter-than-default
+  // values (see the call site) so the gate is usually ready again in a
+  // couple of seconds even if the server is slow — short of the defaults
+  // below, but not so tight that a normal TLS handshake gets mistaken for a
+  // failure — and falls back to the offline queue if it still doesn't make
+  // it. The queue flush uses the generous defaults since nobody is waiting
+  // at the gate for it.
   bool punch(int slotId, const char *kind, float confidence, const String &happenedAtIso,
              const String &clientUuid, bool createdOffline, JsonDocument &out,
              int connectTimeoutMs = 5000, int readTimeoutMs = 8000);
@@ -42,6 +54,7 @@ class BackendClient {
  private:
   String host_;
   String deviceKey_;
+  int lastStatus_ = 0;
 
   bool request(const char *method, const String &path, JsonDocument *body, JsonDocument &out,
                int connectTimeoutMs = 5000, int readTimeoutMs = 8000);

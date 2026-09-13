@@ -105,6 +105,30 @@ and the second WiFi slot live in our own NVS namespace and would otherwise
 survive a portal erase, so the gate would reconnect to the old network on the
 next boot. Use our button (or the hardware button above) for a clean reset.
 
+### Changing just the device key (e.g. after "Rotate key" in the panel)
+
+The captive portal only opens on boot when there is **no** usable saved
+network, or from the reset button above — normal `loop()` never reopens it
+just because you want to change the key while WiFi is already connecting
+fine. So to swap in a new device key you must go through one of the two
+resets above (either wipes WiFi too; re-enter it in the same portal session
+along with the new key).
+
+Two things confirm the swap actually took, rather than leaving you guessing
+whether the old key silently survived:
+
+- **Boot log / OLED**: right after `g_backend` is created, the serial log
+  prints `[setup] device key ...XXXX @ https://...` (last 4 characters only)
+  and the OLED shows `key ..XXXX` for a moment. Compare that against the key
+  you just pasted into the panel.
+- **If the key doesn't match what the backend expects**, the handshake gets
+  a clean `401` from the server (it's reachable, it just doesn't recognise
+  this key) and the gate says so explicitly — serial: `device key rejected
+  (401) — reprovision this gate`, OLED: `key rejected! reprovision` — instead
+  of the generic "handshake failed, retry" it prints for an actually
+  unreachable server. Seeing the generic message on repeat instead means the
+  network/server is the problem, not the key.
+
 ## Three WiFi networks, MRU order, automatic failover
 
 - The gate remembers the **last 3 networks it has connected to**, kept in

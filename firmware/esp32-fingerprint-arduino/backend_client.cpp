@@ -10,6 +10,7 @@ BackendClient::BackendClient(String host, String deviceKey)
 
 bool BackendClient::request(const char *method, const String &path, JsonDocument *body,
                              JsonDocument &out, int connectTimeoutMs, int readTimeoutMs) {
+  lastStatus_ = 0;
   String url = host_ + path;
   HTTPClient http;
   WiFiClientSecure secureClient;
@@ -21,6 +22,15 @@ bool BackendClient::request(const char *method, const String &path, JsonDocument
 #else
     secureClient.setCACert(ROOT_CA_PEM);
 #endif
+    // setConnectTimeout()/http.setTimeout() below do NOT bound the TLS
+    // handshake itself — NetworkClientSecure runs it under its own
+    // handshake_timeout, which defaults to 120000 ms regardless of what the
+    // caller asked for. Left uncapped, a stalled handshake (bad network,
+    // half-open connection) can block this call for up to two minutes —
+    // comfortably past the 90 s task watchdog, and long enough to look like
+    // the gate randomly hangs or reboots rather than cleanly falling back to
+    // the offline queue. Cap it to the same budget the caller gave us.
+    secureClient.setHandshakeTimeout((connectTimeoutMs + 999) / 1000);
     http.begin(secureClient, url);
   } else {
     http.begin(url);
@@ -49,6 +59,10 @@ bool BackendClient::request(const char *method, const String &path, JsonDocument
 
   String respBody = http.getString();
   http.end();
+  // HTTPClient returns a negative HTTPC_ERROR_* code (not a status code) when
+  // it never got a response at all (DNS/connect/handshake/timeout) — fold
+  // those to 0 so lastStatus() matches its documented contract.
+  lastStatus_ = (code > 0) ? code : 0;
 
   if (code < 200 || code >= 300) {
     Serial.printf("[backend] %s %s -> %d: %s\n", method, path.c_str(), code, respBody.c_str());

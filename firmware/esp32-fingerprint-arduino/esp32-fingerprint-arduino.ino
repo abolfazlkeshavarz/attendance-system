@@ -108,6 +108,13 @@ String nowIso() {
   return String(buf);
 }
 
+// Last 4 characters only — enough to tell two keys apart in a log line
+// without ever writing the real secret to serial/OLED.
+String maskKey(const String &key) {
+  if (key.length() <= 4) return key;
+  return key.substring(key.length() - 4);
+}
+
 String makeClientUuid() {
   uint8_t mac[6];
   WiFi.macAddress(mac);
@@ -362,14 +369,20 @@ void handleMatch(uint16_t slot, uint16_t confidence) {
 
   if (WiFi.status() == WL_CONNECTED) {
     JsonDocument resp;
-    // Tight timeouts: someone is standing at the gate. If the server is slow
-    // or unreachable the punch drops straight into the offline queue and the
-    // gate is ready again in well under 3 s; flushQueue() delivers it later.
-    // (No separate "scanning" ping here — it was a second blocking round-trip
-    // on the hot path; the punch endpoint updates the kiosk status itself.)
+    // Someone is standing at the gate, so this is capped well short of the
+    // library's own defaults (5 s connect / 8 s read) — but a *full* TLS
+    // handshake (TCP + certificate chain verification, done in software on
+    // this chip) routinely takes 1-2 s on its own, so cutting it much
+    // tighter than this just moves genuine, successful handshakes into the
+    // offline queue instead of actually saving time. If it still doesn't
+    // make it in time, this drops into the offline queue and the gate is
+    // ready again; flushQueue() delivers it once the connection catches up.
+    // (No separate "scanning" ping here — it was a second blocking
+    // round-trip on the hot path; the punch endpoint updates the kiosk
+    // status itself.)
     bool ok = g_backend->punch(slot, nullptr, (float)confidence, entry["happened_at"].as<String>(),
                                 entry["client_uuid"].as<String>(), false, resp,
-                                /*connectTimeoutMs=*/1500, /*readTimeoutMs=*/1200);
+                                /*connectTimeoutMs=*/3000, /*readTimeoutMs=*/2500);
     if (ok) {
       char buf[32];
       snprintf(buf, sizeof(buf), "punch slot %u ok", slot);
@@ -448,6 +461,13 @@ void setup() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // UTC; happened_at is sent as UTC (Z)
 
   g_backend = new BackendClient(g_cfg.backendHost, g_cfg.deviceKey);
+  // Never print the full key, but printing *something* derived from it lets
+  // you confirm — from the serial log or the OLED, right after reprovisioning
+  // — that the key you just typed is actually the one that got saved and
+  // loaded, instead of guessing whether the portal silently kept the old one.
+  Serial.printf("[setup] device key ...%s @ %s\n", maskKey(g_cfg.deviceKey).c_str(),
+                g_cfg.backendHost.c_str());
+  oled::log(String("key ..") + maskKey(g_cfg.deviceKey));
 
   if (!g_sensor.begin(Serial2, PIN_FP_RX, PIN_FP_TX) || !g_sensor.verify()) {
     Serial.println("[setup] fingerprint sensor not responding — check wiring/baud rate");
@@ -493,7 +513,18 @@ void loop() {
           g_state = AppState::SYNC;
           break;
         }
-        oled::log("handshake failed, retry");
+        if (g_backend->deviceKeyRejected()) {
+          // The server is reachable and answered — it just doesn't recognise
+          // this key. Distinguished from a generic network failure because
+          // it needs a different fix (reprovision with the current key from
+          // the panel) and would otherwise retry forever every 3 s looking
+          // exactly like "server unreachable".
+          Serial.println("[handshake] device key rejected (401) — reprovision this gate");
+          oled::log("key rejected! reprovision");
+          led::scanError();
+        } else {
+          oled::log("handshake failed, retry");
+        }
       }
       // Backend still unreachable long after boot — most likely a shared
       // outage where the server is also coming back up. Run anyway so
