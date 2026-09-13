@@ -52,6 +52,7 @@ enum class AppState { HANDSHAKE, SYNC, RUN };
 DeviceConfig g_cfg;
 BackendClient *g_backend = nullptr;
 FingerprintSensor g_sensor;
+bool g_sensorReady = false;  // g_sensor.begin()+verify() succeeded — safe to talk to
 SlotMap g_slotMap;
 OfflineQueue g_queue;
 
@@ -148,19 +149,45 @@ std::vector<uint8_t> decodeBase64(const String &b64) {
   return out;
 }
 
-// Wipe config and restart when the reset button is held for RESET_HOLD_MS.
-// Called from loop() and from inside the WiFi wait so it works even when the
-// gate is stuck offline.
+// Full "start again": WiFi + backend + device key (config::clear()), our own
+// fingerprint slot map, the offline queue, AND the templates stored ON the
+// sensor itself. config::clear() alone (the older behaviour) left the slot
+// map, queue and sensor database untouched — someone re-provisioning after a
+// device-key change would keep seeing old queued punches and old enrollees
+// with no way to tell they were stale. Called by the reset button and by the
+// captive portal's "Erase ALL settings" button; never returns.
+void factoryReset() {
+  Serial.println("[reset] full factory reset — wiping everything and restarting");
+  oled::log("erasing everything...");
+  led::allOn();
+
+  config::clear();
+
+  g_slotMap.clear();
+  g_slotMap.save();
+
+  g_queue.clear();
+
+  if (g_sensorReady) {
+    wdtPause();
+    if (!g_sensor.eraseAllTemplates()) {
+      Serial.println("[reset] sensor did not confirm the database erase");
+    }
+    wdtResume();
+  }
+
+  delay(600);
+  ESP.restart();
+}
+
+// Wipe everything and restart when the reset button is held for
+// RESET_HOLD_MS. Called from loop() and from inside the WiFi wait so it
+// works even when the gate is stuck offline.
 void checkResetButton() {
   if (digitalRead(PIN_RESET_BTN) == LOW) {
     if (g_resetPressStart == 0) g_resetPressStart = millis();
     if (millis() - g_resetPressStart >= RESET_HOLD_MS) {
-      Serial.println("[reset] button held — wiping config and restarting");
-      oled::log("resetting config...");
-      led::allOn();
-      config::clear();
-      delay(600);
-      ESP.restart();
+      factoryReset();
     }
   } else {
     g_resetPressStart = 0;
@@ -189,7 +216,7 @@ void ensureWifi() {
   Serial.println("[wifi] no saved network reachable, opening portal");
   oled::log("all wifi down, portal");
   wdtPause();
-  config::runProvisioningPortal(g_cfg);
+  config::runProvisioningPortal(g_cfg, factoryReset);
   wdtResume();
 }
 
@@ -338,16 +365,51 @@ void doSync() {
 // --------------------------------------------------------------------- punch
 
 void flushQueue() {
+  // If the item at the head of the queue is one the server will NEVER
+  // accept (an unmapped slot, a cooldown that will never lapse, ...), the
+  // old code stopped at the first failure every single call — silently
+  // blocking every punch behind it forever, no matter how many were queued
+  // up. Tracked here so a run of *definite* rejections (4xx: the server
+  // responded and said no) — not "server unreachable", which must keep
+  // retrying forever — eventually drops just that one item instead.
+  static String s_stuckUuid;
+  static int s_stuckFailCount = 0;
+  constexpr int kMaxRejectRetries = 10;  // ~2.5 min at the 15 s flush interval
+
   while (g_queue.size() > 0 && WiFi.status() == WL_CONNECTED) {
     JsonDocument item;
     if (!g_queue.front(item)) break;
+    String uuid = item["client_uuid"] | "";
+
     JsonDocument resp;
     bool ok = g_backend->punch(
         item["slot_id"], item["kind"].isNull() ? nullptr : item["kind"].as<const char *>(),
-        item["confidence"] | -1.0f, item["happened_at"] | "", item["client_uuid"] | "",
+        item["confidence"] | -1.0f, item["happened_at"] | "", uuid,
         /*createdOffline=*/true, resp);
-    if (!ok) break;  // still offline (or a transient error) — try again later
+    if (ok) {
+      g_queue.popFront();
+      s_stuckUuid = "";
+      s_stuckFailCount = 0;
+      continue;
+    }
+
+    int status = g_backend->lastStatus();
+    if (!(status >= 400 && status < 500)) break;  // unreachable/5xx — keep it queued, retry later
+
+    if (uuid.length() > 0 && uuid == s_stuckUuid) {
+      s_stuckFailCount++;
+    } else {
+      s_stuckUuid = uuid;
+      s_stuckFailCount = 1;
+    }
+    if (s_stuckFailCount < kMaxRejectRetries) break;  // give it a few more flush cycles first
+
+    Serial.printf("[queue] dropping a punch the server rejected %d times in a row (status %d)\n",
+                  s_stuckFailCount, status);
+    oled::log("dropped stuck queue item");
     g_queue.popFront();
+    s_stuckUuid = "";
+    s_stuckFailCount = 0;
   }
 }
 
@@ -442,7 +504,7 @@ void setup() {
   if (!config::load(g_cfg)) {
     oled::log("no config, opening portal");
     wdtPause();
-    bool ok = config::runProvisioningPortal(g_cfg);
+    bool ok = config::runProvisioningPortal(g_cfg, factoryReset);
     wdtResume();
     if (!ok) {
       Serial.println("[setup] provisioning failed, restarting");
@@ -469,7 +531,8 @@ void setup() {
                 g_cfg.backendHost.c_str());
   oled::log(String("key ..") + maskKey(g_cfg.deviceKey));
 
-  if (!g_sensor.begin(Serial2, PIN_FP_RX, PIN_FP_TX) || !g_sensor.verify()) {
+  g_sensorReady = g_sensor.begin(Serial2, PIN_FP_RX, PIN_FP_TX) && g_sensor.verify();
+  if (!g_sensorReady) {
     Serial.println("[setup] fingerprint sensor not responding — check wiring/baud rate");
     oled::log("sensor not responding");
   } else {

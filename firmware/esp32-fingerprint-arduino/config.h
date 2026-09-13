@@ -52,6 +52,13 @@ bool connectBestWifi(DeviceConfig &cfg, uint32_t perNetworkMs = 15000);
 // key. The chosen network is pushed in at slot 0 (dropping the oldest of the
 // three, or just refreshing its password if it's already remembered).
 // Returns true once WiFi connects and cfg is filled in.
-bool runProvisioningPortal(DeviceConfig &cfg);
+//
+// fullFactoryReset is called if someone taps the portal's "Erase ALL
+// settings" button, INSTEAD of the usual config::clear() — this file has no
+// visibility into the fingerprint slot map, offline queue or sensor object
+// that a real "start again" also needs to wipe, all of which live in the
+// main sketch. It must itself restart the device (this function does not
+// return afterwards). Pass nullptr to fall back to config::clear() alone.
+bool runProvisioningPortal(DeviceConfig &cfg, void (*fullFactoryReset)() = nullptr);
 
 }  // namespace config

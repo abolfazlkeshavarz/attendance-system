@@ -91,28 +91,38 @@ sits on GPIO27, the pin the buzzer used to use — there is no buzzer anymore.
 | green "success" | GPIO25 | solid for 2 s after a finger is matched and the attendance punch is accepted (also after an enrollment finishes). Off otherwise. |
 | red "error" | GPIO26 | **5 fast blinks (~1.5 s)** when a finger is read but matches nobody enrolled ("not recognised"); **solid on the whole time WiFi is disconnected**; a short single burst on any other failure; a slow double-blink while fingerprint punching is switched off in the panel but WiFi is still up (tells people it's disabled, not broken). |
 
-## Reset button — hold 5 s to re-provision
+## Full factory reset — hold the button 5 s, or from the portal
 
 Momentary button between **GPIO33 and GND** (uses the internal pull-up).
-Hold it for 5 seconds during normal operation: all three LEDs come on, the
-saved WiFi networks + backend URL + device key are wiped, and the unit
-reboots straight into the captive portal.
+Hold it for 5 seconds during normal operation and the gate wipes
+*everything* and reboots straight into the captive portal:
 
-You can also do the full wipe from the captive portal itself: the menu has an
-**"Erase ALL settings (WiFi + backend)"** button. WiFiManager's own *Erase*
-only clears the ESP32's saved WiFi credentials — the backend URL, device key
-and the second WiFi slot live in our own NVS namespace and would otherwise
-survive a portal erase, so the gate would reconnect to the old network on the
-next boot. Use our button (or the hardware button above) for a clean reset.
+- WiFi networks (all 3 slots) + backend URL + device key
+- our fingerprint slot map (which employee is in which sensor slot)
+- the offline queue (any punches not yet delivered)
+- every fingerprint template stored **on the sensor itself**
+
+No button, or can't reach it? The portal has the same button —
+**"Erase ALL settings (WiFi + backend + fingerprints)"** — but it only opens
+on its own when there's no usable saved WiFi. If the gate is currently online,
+make its saved network(s) unreachable for about a minute (turn off that WiFi,
+or change its password) — after ~45 s (3 networks × 15 s) it gives up and
+opens its own **"Attendance-FP-Setup"** AP; connect a phone to it and use the
+button there. (WiFiManager's own plain *Erase*, if you ever see it elsewhere
+in the menu, only clears the ESP32's saved WiFi credentials — the backend
+URL, device key and WiFi slots live in our own NVS namespace and would
+survive it, so the gate would just reconnect to the old network on the next
+boot. Always use the red "Erase ALL" button, or the hardware button, for a
+clean reset.)
 
 ### Changing just the device key (e.g. after "Rotate key" in the panel)
 
 The captive portal only opens on boot when there is **no** usable saved
-network, or from the reset button above — normal `loop()` never reopens it
+network, or from the full reset above — normal `loop()` never reopens it
 just because you want to change the key while WiFi is already connecting
-fine. So to swap in a new device key you must go through one of the two
-resets above (either wipes WiFi too; re-enter it in the same portal session
-along with the new key).
+fine. So to swap in a new device key you must go through a full reset
+(either method above; both wipe WiFi too — re-enter it in the same portal
+session along with the new key).
 
 Two things confirm the swap actually took, rather than leaving you guessing
 whether the old key silently survived:
@@ -153,6 +163,13 @@ whether the old key silently survived:
   answers. It also keeps retrying NTP until the clock is set.
 - Last-known settings (`min_seconds_between_punches`, fingerprint on/off) are
   cached in NVS so a degraded start behaves sensibly.
+- A queued punch the server actually *rejects* outright (a 4xx — an unmapped
+  slot, or something a cooldown will never clear) is retried a bounded number
+  of times (~2.5 min) and then dropped with a `[queue] dropping a punch...`
+  log line, instead of silently blocking every punch behind it in the queue
+  forever. A punch that's merely undelivered because the server/network is
+  down (no response, or a 5xx) is never dropped — it stays queued as long as
+  it takes.
 
 ## 6. Compile and upload
 

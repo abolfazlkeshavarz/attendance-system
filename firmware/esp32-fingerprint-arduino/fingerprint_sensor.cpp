@@ -156,6 +156,10 @@ bool FingerprintSensor::deleteAtSlot(uint16_t slot) {
   return finger_->deleteModel(slot) == FINGERPRINT_OK;
 }
 
+bool FingerprintSensor::eraseAllTemplates() {
+  return finger_->emptyDatabase() == FINGERPRINT_OK;
+}
+
 bool FingerprintSensor::extractTemplate(uint16_t slot, std::vector<uint8_t> &out) {
   out.clear();
   // NOT IMPLEMENTABLE with the stock Adafruit_Fingerprint library (checked

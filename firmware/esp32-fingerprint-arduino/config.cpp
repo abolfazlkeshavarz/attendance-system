@@ -130,7 +130,7 @@ bool connectBestWifi(DeviceConfig &cfg, uint32_t perNetworkMs) {
   return false;
 }
 
-bool runProvisioningPortal(DeviceConfig &cfg) {
+bool runProvisioningPortal(DeviceConfig &cfg, void (*fullFactoryReset)()) {
   WiFiManager wm;
   wm.setConfigPortalTimeout(300);   // give someone 5 minutes to walk up with a phone
   wm.setBreakAfterConfig(true);     // return control to us after credentials are entered
@@ -144,25 +144,34 @@ bool runProvisioningPortal(DeviceConfig &cfg) {
   // credentials. Our backend URL / device key / all three WiFi slots live in
   // the "fpcfg" NVS namespace and would survive it, so after a portal-erase the
   // gate just reconnects to the old network on the next boot. Add a button
-  // that runs the same full wipe as the physical reset button and reboots
-  // into a clean portal.
+  // that does a full factory reset (WiFi + backend + fingerprint slot map +
+  // offline queue + the sensor's own template database — see fullFactoryReset
+  // in the main sketch) and reboots into a clean portal. This is also the
+  // only way to reach a full reset on a gate whose physical button isn't
+  // wired up or reachable — as long as it still has a working network, force
+  // that network to fail (or just wait it out) so the gate falls back to
+  // opening this portal on its own, then use this button.
   std::vector<const char *> menu = {"wifi", "info", "sep", "custom", "restart", "exit"};
   wm.setMenu(menu);
   wm.setCustomMenuHTML(
       "<form action='/eraseall' method='get'>"
       "<button class='D' style='background:#dc3630'>"
-      "Erase ALL settings (WiFi + backend)</button></form>");
-  wm.setWebServerCallback([&wm]() {
-    wm.server->on("/eraseall", [&wm]() {
+      "Erase ALL settings (WiFi + backend + fingerprints)</button></form>");
+  wm.setWebServerCallback([&wm, fullFactoryReset]() {
+    wm.server->on("/eraseall", [&wm, fullFactoryReset]() {
       wm.server->send(200, "text/html",
                       "<html><head><meta name='viewport' "
                       "content='width=device-width,initial-scale=1'></head>"
                       "<body style='font-family:sans-serif;padding:2em;text-align:center'>"
-                      "<h3>All settings erased</h3>"
-                      "<p>The gate is restarting into setup. Reconnect to the "
-                      "<b>Attendance-FP-Setup</b> WiFi network.</p></body></html>");
+                      "<h3>Everything erased</h3>"
+                      "<p>WiFi, backend settings, enrolled fingerprints and the offline "
+                      "queue are all gone. The gate is restarting into setup. Reconnect "
+                      "to the <b>Attendance-FP-Setup</b> WiFi network.</p></body></html>");
       delay(400);
-      config::clear();  // clears fpcfg *and* calls WiFiManager::resetSettings()
+      if (fullFactoryReset) {
+        fullFactoryReset();  // wipes everything and restarts — does not return
+      }
+      config::clear();  // fallback: at least clears fpcfg + calls WiFiManager::resetSettings()
       delay(200);
       ESP.restart();
     });

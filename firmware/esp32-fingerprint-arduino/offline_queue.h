@@ -16,6 +16,9 @@ class OfflineQueue {
 
   bool front(JsonDocument &out);
   void popFront();
+  // Drops every queued punch — part of a full factory reset. Irreversible:
+  // whatever hadn't reached the server yet is gone.
+  void clear();
 
  private:
   static constexpr const char *kPath = "/queue.jsonl";

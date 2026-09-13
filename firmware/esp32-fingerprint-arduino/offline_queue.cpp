@@ -41,6 +41,11 @@ bool OfflineQueue::front(JsonDocument &out) {
   return deserializeJson(out, line) == DeserializationError::Ok;
 }
 
+void OfflineQueue::clear() {
+  LittleFS.remove(kPath);
+  count_ = 0;
+}
+
 void OfflineQueue::popFront() {
   File in = LittleFS.open(kPath, "r");
   if (!in) return;

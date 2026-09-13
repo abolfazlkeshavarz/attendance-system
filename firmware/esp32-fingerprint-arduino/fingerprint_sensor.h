@@ -17,6 +17,10 @@ class SlotMap {
   bool get(int employeeId, uint16_t &slot) const;
   void set(int employeeId, uint16_t slot);
   void remove(int employeeId);
+  // Forgets every employee<->slot mapping (does not touch the sensor's own
+  // fingerprint database — call FingerprintSensor::eraseAllTemplates() too
+  // for that). Caller must save() afterwards.
+  void clear() { entries_.clear(); }
 
   // First slot index in [0, capacity) not currently assigned to anyone.
   uint16_t findFree(uint16_t capacity) const;
@@ -48,6 +52,12 @@ class FingerprintSensor {
   bool enrollAtSlot(uint16_t slot, void (*onStep)(const char *msg));
 
   bool deleteAtSlot(uint16_t slot);
+  // Wipes every fingerprint template stored ON THE SENSOR ITSELF (PS_Empty) —
+  // irreversible, and independent of the SlotMap above (which only forgets
+  // *our* bookkeeping). Part of a full factory reset; the caller is
+  // responsible for also clearing/saving the SlotMap so the two stay in
+  // sync.
+  bool eraseAllTemplates();
 
   // --- Template portability (multi-gate sync) ---
   //
