@@ -44,6 +44,11 @@ export default defineConfig({
     ...(noHttps || explicitCert ? [] : [basicSsl()]),
     VitePWA({
       registerType: 'autoUpdate',
+      // ثبتِ سرویس‌ورکر را دستی (در main.tsx) انجام می‌دهیم تا هر چند دقیقه
+      // یک‌بار خودمان بررسیِ نسخهٔ جدید را صدا بزنیم — تبلتِ کیوسک معمولاً
+      // هفته‌ها بدون رفرشِ دستی باز می‌ماند و بدون این، ممکن است تا مدت‌ها
+      // متوجهٔ نسخهٔ تازه نشود.
+      injectRegister: false,
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'سامانه حضور و غیاب',
