@@ -5,6 +5,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timedelta
+from io import BytesIO
 
 import pytest
 
@@ -372,6 +373,48 @@ def test_public_leave_request_flow(client, admin_headers):
     assert row2["status"] in ("leave", "weekend", "holiday")
 
 
+def test_leaves_export_excel_content(client, admin_headers):
+    """محتوای واقعیِ خروجی اکسل مرخصی‌ها را می‌خواند، نه فقط اینکه یک xlsx معتبر است."""
+    import openpyxl
+
+    emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "3004", "first_name": "سعید", "last_name": "کاظمی"},
+    ).json()
+    today = today_tehran()
+    leave = client.post(
+        f"{API}/leaves",
+        headers=admin_headers,
+        json={
+            "employee_id": emp["id"],
+            "leave_type": "sick",
+            "start_jalali_date": jalali_str(today),
+            "end_jalali_date": jalali_str(today),
+            "reason": "مراجعه به پزشک",
+        },
+    ).json()
+    client.patch(f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"status": "approved"})
+
+    res = client.get(
+        f"{API}/reports/export/leaves.xlsx",
+        headers=admin_headers,
+        params={"employee_id": emp["id"]},
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/vnd.openxml")
+
+    wb = openpyxl.load_workbook(BytesIO(res.content))
+    ws = wb.active
+    all_text = " ".join(
+        str(cell.value) for row in ws.iter_rows() for cell in row if cell.value is not None
+    )
+    assert "سعید کاظمی" in all_text
+    assert "استعلاجی" in all_text  # برچسب فارسیِ نوع مرخصی sick
+    assert "تأیید شده" in all_text
+    assert "مراجعه به پزشک" in all_text
+
+
 def test_tasks_lifecycle(client, admin_headers, employee):
     today = today_tehran()
     task = client.post(
@@ -461,6 +504,9 @@ def test_monthly_report_and_excel_export(client, admin_headers):
 
     punches_xlsx = client.get(f"{API}/reports/export/punches.xlsx", headers=admin_headers)
     assert punches_xlsx.status_code == 200 and punches_xlsx.content[:2] == b"PK"
+
+    leaves_xlsx = client.get(f"{API}/reports/export/leaves.xlsx", headers=admin_headers)
+    assert leaves_xlsx.status_code == 200 and leaves_xlsx.content[:2] == b"PK"
 
 
 def test_weekly_report(client, admin_headers):

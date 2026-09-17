@@ -201,8 +201,16 @@ def punch(payload: FingerprintPunchRequest, device: CurrentDevice, db: DbSession
             created_offline=payload.created_offline,
         )
     except attendance_service.PunchError as exc:
+        db.rollback()
         kiosk_status_service.record(db, device, phase="error", employee=emp, message=str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Commit the actual punch on its own, before the kiosk-mirror write below.
+    # record_punch() doesn't commit itself; kiosk_status_service.record() is
+    # allowed to fail (it only feeds the kiosk screen) and rolls itself back
+    # on error — that rollback must never be able to take the real attendance
+    # row down with it.
+    db.commit()
 
     device.last_sync_at = now_utc()
     result.message = f"{emp.full_name} — {result.message}"

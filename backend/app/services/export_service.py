@@ -29,6 +29,10 @@ STATUS_FILLS = {
     "تعطیل رسمی": PatternFill("solid", fgColor="EDEDED"),
     "تعطیل هفتگی": PatternFill("solid", fgColor="F5F5F5"),
     "ناقص": PatternFill("solid", fgColor="FFE0B2"),
+    # وضعیت درخواست مرخصی (build_leaves_workbook) — کلیدهای جدا از وضعیت روز بالا
+    "تأیید شده": PatternFill("solid", fgColor="E2EFDA"),
+    "رد شده": PatternFill("solid", fgColor="FCE4E4"),
+    "در انتظار تأیید": PatternFill("solid", fgColor="FFF2CC"),
 }
 
 
@@ -308,6 +312,46 @@ def build_tasks_workbook(rows: list[dict], title: str, subtitle: str) -> bytes:
         )
         row += 1
     _autofilter(ws, len(TASK_COLUMNS), row - 1)
+    return _save(wb)
+
+
+# --------------------------------------------------------------- مرخصی‌ها و مأموریت‌ها
+
+LEAVE_COLUMNS = [
+    "ردیف", "کد پرسنلی", "نام و نام خانوادگی", "واحد", "نوع مرخصی", "وضعیت",
+    "از تاریخ", "تا تاریخ", "مدت", "توضیحات", "یادداشت بررسی", "بررسی‌کننده", "تاریخ بررسی",
+]
+
+
+def build_leaves_workbook(rows: list[dict], start: date, end: date) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "مرخصی‌ها"
+    subtitle = f"از {jalali_long(start)} تا {jalali_long(end)}" if start != end else jalali_long(start)
+    row = _setup_sheet(ws, "گزارش مرخصی‌ها و مأموریت‌ها", subtitle, LEAVE_COLUMNS)
+    for i, r in enumerate(rows, start=1):
+        _write_row(
+            ws,
+            row,
+            [
+                i,
+                r.get("personnel_code", ""),
+                r.get("employee_name", ""),
+                r.get("department_name") or "-",
+                r.get("leave_type_fa", ""),
+                r.get("status_fa", ""),
+                r.get("start_jalali", ""),
+                r.get("end_jalali", ""),
+                r.get("duration", ""),
+                r.get("reason") or "-",
+                r.get("review_note") or "-",
+                r.get("reviewer_name") or "-",
+                r.get("reviewed_jalali") or "-",
+            ],
+            status_col=6,
+        )
+        row += 1
+    _autofilter(ws, len(LEAVE_COLUMNS), row - 1)
     return _save(wb)
 
 

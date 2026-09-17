@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import urllib.parse
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -11,20 +11,24 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import AnyUser, DbSession
 from app.core.jalali import (
+    TEHRAN,
     jalali_long,
     jalali_month_range,
     jalali_str,
     parse_jalali,
     to_jalali as gregorian_to_jalali,
+    to_tehran,
+    to_utc,
     today_tehran,
     week_range,
 )
 from app.models.attendance import AttendanceRecord
 from app.models.employee import Employee, FaceEmbedding
-from app.models.enums import DayStatus, LeaveStatus, TaskStatus
+from app.models.enums import DayStatus, LeaveStatus, LeaveType, TaskStatus, fa
 from app.models.leave import LeaveRequest
 from app.models.organization import Department
 from app.models.task import Task
+from app.models.user import User
 from app.services import export_service
 from app.services.report_service import (
     PeriodSummary,
@@ -430,3 +434,89 @@ def export_tasks(
         rows, "گزارش وظایف پرسنل", f"تاریخ تهیه: {jalali_long(today)}"
     )
     return _xlsx_response(content, export_service.filename_for("vazayef", today))
+
+
+@router.get("/export/leaves.xlsx", summary="خروجی اکسل مرخصی‌ها و مأموریت‌ها")
+def export_leaves(
+    db: DbSession,
+    _: AnyUser,
+    employee_id: int | None = None,
+    department_id: int | None = None,
+    status: str | None = None,
+    leave_type: str | None = None,
+    from_jalali: str | None = None,
+    to_jalali: str | None = None,
+) -> Response:
+    """پیش‌فرض همهٔ پرسنل و همهٔ انواع/وضعیت‌های مرخصی را می‌گیرد؛ هر پارامتر
+    اختیاری همان فیلترهای صفحهٔ «مرخصی‌ها» را اعمال می‌کند."""
+    stmt = select(LeaveRequest).options(
+        selectinload(LeaveRequest.employee).selectinload(Employee.department)
+    )
+    if employee_id:
+        stmt = stmt.where(LeaveRequest.employee_id == employee_id)
+    if department_id:
+        stmt = stmt.where(
+            LeaveRequest.employee_id.in_(
+                select(Employee.id).where(Employee.department_id == department_id)
+            )
+        )
+    if status:
+        stmt = stmt.where(LeaveRequest.status == status)
+    if leave_type:
+        stmt = stmt.where(LeaveRequest.leave_type == leave_type)
+
+    range_start = parse_jalali(from_jalali) if from_jalali else None
+    range_end = parse_jalali(to_jalali) if to_jalali else None
+    if range_start:
+        stmt = stmt.where(
+            LeaveRequest.end_at >= to_utc(datetime.combine(range_start, time.min, tzinfo=TEHRAN))
+        )
+    if range_end:
+        stmt = stmt.where(
+            LeaveRequest.start_at
+            < to_utc(datetime.combine(range_end, time.min, tzinfo=TEHRAN) + timedelta(days=1))
+        )
+
+    leaves = list(db.execute(stmt.order_by(LeaveRequest.start_at.desc())).scalars())
+
+    reviewer_ids = {lv.reviewed_by_user_id for lv in leaves if lv.reviewed_by_user_id}
+    reviewers: dict[int, str] = {}
+    if reviewer_ids:
+        for u in db.execute(select(User).where(User.id.in_(reviewer_ids))).scalars():
+            reviewers[u.id] = u.full_name or u.username
+
+    rows = []
+    for lv in leaves:
+        emp = lv.employee
+        start_d = to_tehran(lv.start_at).date()
+        # end_at is an exclusive midnight boundary (see resolve_leave_window) — back
+        # up one second so a daily/mission leave reports the day it actually ends on.
+        end_d = to_tehran(lv.end_at - timedelta(seconds=1)).date()
+        if lv.leave_type == LeaveType.HOURLY.value:
+            hours = round((lv.end_at - lv.start_at).total_seconds() / 3600, 1)
+            duration = f"{hours} ساعت"
+        else:
+            duration = f"{(end_d - start_d).days + 1} روز"
+
+        rows.append(
+            {
+                "personnel_code": emp.personnel_code if emp else "",
+                "employee_name": emp.full_name if emp else "",
+                "department_name": emp.department.name if emp and emp.department else None,
+                "leave_type_fa": fa(lv.leave_type),
+                "status_fa": fa(lv.status),
+                "start_jalali": jalali_str(start_d),
+                "end_jalali": jalali_str(end_d),
+                "duration": duration,
+                "reason": lv.reason,
+                "review_note": lv.review_note,
+                "reviewer_name": reviewers.get(lv.reviewed_by_user_id) if lv.reviewed_by_user_id else None,
+                "reviewed_jalali": jalali_str(to_tehran(lv.reviewed_at).date()) if lv.reviewed_at else None,
+            }
+        )
+
+    today = today_tehran()
+    range_start_d = range_start or (to_tehran(leaves[-1].start_at).date() if leaves else today)
+    range_end_d = range_end or (to_tehran(leaves[0].start_at).date() if leaves else today)
+    content = export_service.build_leaves_workbook(rows, range_start_d, range_end_d)
+    return _xlsx_response(content, export_service.filename_for("morakhasi", range_start_d, range_end_d))

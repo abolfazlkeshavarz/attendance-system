@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Check, Plus, Trash2, X } from 'lucide-react'
-import { api, errorMessage } from '../lib/api'
+import { CalendarDays, Check, Download, Plus, Trash2, X } from 'lucide-react'
+import { api, downloadFile, errorMessage } from '../lib/api'
 import { canEdit, useAuth } from '../lib/auth'
 import type { Employee, Leave, Page } from '../lib/types'
 import { toJalaliString, toPersianDigits } from '../lib/jalali'
@@ -37,8 +37,10 @@ export default function Leaves() {
 
   const [status, setStatus] = useState('')
   const [employeeId, setEmployeeId] = useState('')
+  const [leaveType, setLeaveType] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [deleting, setDeleting] = useState<Leave | null>(null)
+  const [downloading, setDownloading] = useState(false)
 
   const [form, setForm] = useState({
     employee_id: '',
@@ -57,14 +59,34 @@ export default function Leaves() {
   })
 
   const list = useQuery({
-    queryKey: ['leaves', status, employeeId],
+    queryKey: ['leaves', status, employeeId, leaveType],
     queryFn: async () =>
       (
         await api.get<Leave[]>('/leaves', {
-          params: { status: status || undefined, employee_id: employeeId || undefined },
+          params: {
+            status: status || undefined,
+            employee_id: employeeId || undefined,
+            leave_type: leaveType || undefined,
+          },
         })
       ).data,
   })
+
+  async function exportExcel() {
+    setDownloading(true)
+    try {
+      await downloadFile('/reports/export/leaves.xlsx', {
+        status: status || undefined,
+        employee_id: employeeId || undefined,
+        leave_type: leaveType || undefined,
+      })
+      toast.success('فایل اکسل دانلود شد')
+    } catch (err) {
+      toast.error(errorMessage(err))
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const save = useMutation({
     mutationFn: async () =>
@@ -116,20 +138,34 @@ export default function Leaves() {
           title="مرخصی‌ها و مأموریت‌ها"
           subtitle="مرخصی تأییدشده در گزارش‌ها به‌جای «غایب»، «مرخصی» ثبت می‌شود · پرسنل می‌توانند از صفحهٔ عمومی /leave-request (با QR) خودشان درخواست بدهند"
           action={
-            editable && (
-              <button className="btn-primary" onClick={() => setFormOpen(true)}>
-                <Plus size={16} />
-                ثبت مرخصی
+            <div className="flex flex-wrap items-center gap-2">
+              <button className="btn-ghost" onClick={() => void exportExcel()} disabled={downloading}>
+                {downloading ? <Spinner className="size-4" /> : <Download size={16} />}
+                خروجی اکسل
               </button>
-            )
+              {editable && (
+                <button className="btn-primary" onClick={() => setFormOpen(true)}>
+                  <Plus size={16} />
+                  ثبت مرخصی
+                </button>
+              )}
+            </div>
           }
         />
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <select className="input" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
             <option value="">همه پرسنل</option>
             {employees.data?.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.full_name}
+              </option>
+            ))}
+          </select>
+          <select className="input" value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
+            <option value="">همه انواع مرخصی</option>
+            {LEAVE_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
               </option>
             ))}
           </select>

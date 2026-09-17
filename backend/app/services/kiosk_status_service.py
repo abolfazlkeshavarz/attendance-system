@@ -11,18 +11,19 @@
 
 چرا روی `Device` و نه در حافظه: بک‌اند با `uvicorn --workers 2` اجرا می‌شود؛ یک
 دیکشنری در حافظهٔ یک worker برای worker دیگر دیده نمی‌شود. ستون‌ها همه nullable
-هستند تا `Base.metadata.create_all` روی دیتابیس تازه کار کند. برای دیتابیس‌های
-موجود یک‌بار این را اجرا کنید:
+هستند — هم برای اینکه `Base.metadata.create_all` روی دیتابیس تازه کار کند، و
+هم چون `app.main._add_missing_columns` این ستون‌ها را روی دیتابیس‌های موجود هم
+در همان اولین بالا آمدن خودکار اضافه می‌کند (دیگر نیازی به ALTER TABLE دستی
+نیست).
 
-    ALTER TABLE devices ADD COLUMN last_scan_phase varchar(24);
-    ALTER TABLE devices ADD COLUMN last_scan_at timestamptz;      -- SQLite: datetime
-    ALTER TABLE devices ADD COLUMN last_scan_employee_id integer;
-    ALTER TABLE devices ADD COLUMN last_scan_kind varchar(4);
-    ALTER TABLE devices ADD COLUMN last_scan_message varchar(255);
-    ALTER TABLE devices ADD COLUMN last_scan_confidence integer;
+توجه: `record()` عمداً هیچ خطایی را بالا نمی‌برد — این فقط یک آینهٔ نمایشی برای
+کیوسک است؛ نباید بتواند خودِ ثبتِ تردد/ثبت‌نام را که فراخوانی‌اش می‌کند خراب کند.
+به همین دلیل مسیرهایی که به این تابع commit می‌سپارند (مثل punch در
+fingerprint.py) باید کار اصلی‌شان را قبل از این تابع، جدا، commit کرده باشند.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta, timezone
 
 from sqlalchemy import select
@@ -32,6 +33,8 @@ from app.core.jalali import fmt_time, jalali_long, now_utc, to_tehran
 from app.models.device import Device
 from app.models.employee import Employee
 from app.models.enums import DeviceKind
+
+logger = logging.getLogger("attendance")
 
 # پس از این مدت، آخرین رویداد «کهنه» است و کیوسک باید به حالت idle برگردد.
 TTL_SECONDS = 12
@@ -47,13 +50,22 @@ def record(
     message: str | None = None,
     confidence: float | int | None = None,
 ) -> None:
-    device.last_scan_phase = phase
-    device.last_scan_at = now_utc()
-    device.last_scan_employee_id = employee.id if employee is not None else None
-    device.last_scan_kind = kind
-    device.last_scan_message = (message or None) and message[:255]
-    device.last_scan_confidence = None if confidence is None else int(round(confidence))
-    db.commit()
+    try:
+        device.last_scan_phase = phase
+        device.last_scan_at = now_utc()
+        device.last_scan_employee_id = employee.id if employee is not None else None
+        device.last_scan_kind = kind
+        device.last_scan_message = (message or None) and message[:255]
+        device.last_scan_confidence = None if confidence is None else int(round(confidence))
+        db.commit()
+    except Exception:
+        # کیوسک فقط چند ثانیه بعد به idle برمی‌گردد و دوباره تلاش می‌کند — قابل
+        # قبول است. آنچه قابل قبول نیست این است که خرابی همین آینه، ثبتِ خودِ
+        # تردد یا ثبت‌نام را (که caller در همان session/تراکنش انجام داده) پاک
+        # کند؛ rollback هم فقط همین commit ناموفق را برمی‌گرداند چون caller باید
+        # کار خودش را قبلاً commit کرده باشد.
+        db.rollback()
+        logger.exception("kiosk_status_service.record failed for device %s", device.id)
 
 
 def _kiosk_time() -> dict:

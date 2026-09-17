@@ -46,6 +46,11 @@ const FALLBACK_SETTINGS: KioskSettings = {
   device_kind: 'tablet',
 }
 
+// هر چند وقت یک‌بار دوباره handshake بزند تا تغییرِ یک تنظیم از پنل (مثلاً
+// روشن/خاموش کردن اثر انگشت) بدون رفرش دستیِ کیوسک اثر بگذارد — هم‌قدم با
+// همین بازهٔ رفرش تنظیمات روی خودِ ماژول ESP32 (SETTINGS_REFRESH_INTERVAL_MS).
+const KIOSK_SETTINGS_REFRESH_MS = 2 * 60_000
+
 /**
  * تنظیمات را از سرور می‌گیرد و در حافظه محلی نگه می‌دارد.
  *
@@ -60,18 +65,23 @@ export function useKioskSettings(enabled: boolean) {
 
   useEffect(() => {
     if (!enabled) return
-    kioskApi
-      .get('/kiosk/handshake')
-      .then((res) => {
-        const fresh: KioskSettings = {
-          ...FALLBACK_SETTINGS,
-          ...res.data.settings,
-          device_kind: res.data.device?.kind === 'fingerprint' ? 'fingerprint' : 'tablet',
-        }
-        localStorage.setItem('att.kioskSettings', JSON.stringify(fresh))
-        setSettings(fresh)
-      })
-      .catch(() => undefined)
+    const refresh = () => {
+      kioskApi
+        .get('/kiosk/handshake')
+        .then((res) => {
+          const fresh: KioskSettings = {
+            ...FALLBACK_SETTINGS,
+            ...res.data.settings,
+            device_kind: res.data.device?.kind === 'fingerprint' ? 'fingerprint' : 'tablet',
+          }
+          localStorage.setItem('att.kioskSettings', JSON.stringify(fresh))
+          setSettings(fresh)
+        })
+        .catch(() => undefined)  // آفلاین — مقدار ذخیره‌شدهٔ قبلی همچنان معتبر می‌ماند
+    }
+    refresh()
+    const timer = setInterval(refresh, KIOSK_SETTINGS_REFRESH_MS)
+    return () => clearInterval(timer)
   }, [enabled])
 
   return settings

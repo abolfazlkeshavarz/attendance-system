@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import inspect, text
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -21,11 +22,50 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("attendance")
 
 
+def _add_missing_columns() -> None:
+    """`Base.metadata.create_all()` only creates TABLES that don't exist yet —
+    it never alters one that's already there. So a column added to a model
+    after a deployment already has that table (exactly what happened with
+    the fingerprint-kiosk status columns, see kiosk_status_service.py's own
+    docstring) silently never appears on that server unless someone
+    remembers to hand-run an ALTER TABLE. There's no Alembic in this project
+    to catch that, so this closes the safe half of the gap on every boot:
+    any new NULLABLE column (no default-value backfill needed) is added
+    automatically. A new NOT NULL column is left alone and logged — that
+    genuinely needs a real migration with a default value, not a guess here.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # brand-new table — create_all() above already made it
+        existing_cols = {c["name"] for c in inspector.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing_cols:
+                continue
+            if not col.nullable:
+                logger.warning(
+                    "%s.%s is a new NOT NULL column — not auto-adding it; "
+                    "needs a real migration with a default value",
+                    table.name,
+                    col.name,
+                )
+                continue
+            try:
+                col_type = col.type.compile(dialect=engine.dialect)
+                with engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}'))
+                logger.info("schema: added missing column %s.%s (%s)", table.name, col.name, col_type)
+            except Exception:
+                logger.exception("schema: could not auto-add %s.%s — add it manually", table.name, col.name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import app.models  # noqa: F401  ثبت همه جدول‌ها
 
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
     from app.seed import ensure_seed
 
     with SessionLocal() as db:
