@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel, Field, computed_field, field_validator
 
@@ -189,10 +189,21 @@ class PublicLeaveResult(BaseModel):
 
 
 class LeaveUpdate(BaseModel):
+    """ویرایش مرخصی توسط مدیر — هر فیلدِ ارسال‌شده تغییر می‌کند، بقیه دست‌نخورده می‌مانند.
+
+    برای تغییر بازه، تاریخ/ساعت‌ها را (جلالی و ساعت به‌صورت HH:MM) بفرستید؛ فیلدهای
+    بازهٔ ارسال‌نشده از مقدار فعلیِ مرخصی پر می‌شوند.
+    """
+
     status: str | None = None
     review_note: str | None = None
     leave_type: str | None = None
     reason: str | None = None
+    employee_id: int | None = None
+    start_jalali_date: str | None = None
+    end_jalali_date: str | None = None
+    start_clock: str | None = None
+    end_clock: str | None = None
 
 
 class LeaveOut(ORMModel):
@@ -226,4 +237,16 @@ class LeaveOut(ORMModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def end_jalali(self) -> str:
-        return jalali_str(to_tehran(self.end_at).date())
+        # end_at برای مرخصی روزانه «نیمه‌شبِ روز بعد» است (بازهٔ نیمه‌باز)؛ یک ثانیه
+        # عقب می‌رویم تا روزِ واقعیِ پایان نمایش داده شود، نه یک روز بعدتر.
+        return jalali_str(to_tehran(self.end_at - timedelta(seconds=1)).date())
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def start_clock(self) -> str:
+        return to_tehran(self.start_at).strftime("%H:%M")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def end_clock(self) -> str:
+        return to_tehran(self.end_at).strftime("%H:%M")

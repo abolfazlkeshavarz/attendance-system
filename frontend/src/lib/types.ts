@@ -228,6 +228,8 @@ export interface Leave {
   end_at: string
   start_jalali: string
   end_jalali: string
+  start_clock: string
+  end_clock: string
   status: 'pending' | 'approved' | 'rejected'
   status_fa: string
   reason?: string | null

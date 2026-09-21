@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, Check, Download, Plus, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, Download, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { api, downloadFile, errorMessage } from '../lib/api'
 import { canEdit, useAuth } from '../lib/auth'
 import type { Employee, Leave, Page } from '../lib/types'
@@ -39,10 +39,12 @@ export default function Leaves() {
   const [employeeId, setEmployeeId] = useState('')
   const [leaveType, setLeaveType] = useState('')
   const [formOpen, setFormOpen] = useState(false)
+  // اگر مقدار داشته باشد، فرم در حالت «ویرایش» همین مرخصی است؛ وگرنه «ثبت جدید»
+  const [editing, setEditing] = useState<Leave | null>(null)
   const [deleting, setDeleting] = useState<Leave | null>(null)
   const [downloading, setDownloading] = useState(false)
 
-  const [form, setForm] = useState({
+  const emptyForm = () => ({
     employee_id: '',
     leave_type: 'daily',
     start_jalali_date: toJalaliString(),
@@ -50,7 +52,32 @@ export default function Leaves() {
     start_clock: '08:00',
     end_clock: '12:00',
     reason: '',
+    status: 'pending',
+    review_note: '',
   })
+  const [form, setForm] = useState(emptyForm)
+
+  function openCreate() {
+    setEditing(null)
+    setForm(emptyForm())
+    setFormOpen(true)
+  }
+
+  function openEdit(leave: Leave) {
+    setEditing(leave)
+    setForm({
+      employee_id: String(leave.employee_id),
+      leave_type: leave.leave_type,
+      start_jalali_date: leave.start_jalali,
+      end_jalali_date: leave.end_jalali,
+      start_clock: leave.leave_type === 'hourly' ? leave.start_clock : '08:00',
+      end_clock: leave.leave_type === 'hourly' ? leave.end_clock : '12:00',
+      reason: leave.reason ?? '',
+      status: leave.status,
+      review_note: leave.review_note ?? '',
+    })
+    setFormOpen(true)
+  }
 
   const employees = useQuery({
     queryKey: ['employees', 'all'],
@@ -89,20 +116,28 @@ export default function Leaves() {
   }
 
   const save = useMutation({
-    mutationFn: async () =>
-      (
-        await api.post('/leaves', {
-          employee_id: Number(form.employee_id),
-          leave_type: form.leave_type,
-          start_jalali_date: form.start_jalali_date,
-          end_jalali_date: form.end_jalali_date,
-          start_clock: form.leave_type === 'hourly' ? form.start_clock : null,
-          end_clock: form.leave_type === 'hourly' ? form.end_clock : null,
-          reason: form.reason || null,
+    mutationFn: async () => {
+      const body = {
+        employee_id: Number(form.employee_id),
+        leave_type: form.leave_type,
+        start_jalali_date: form.start_jalali_date,
+        end_jalali_date: form.end_jalali_date,
+        start_clock: form.leave_type === 'hourly' ? form.start_clock : null,
+        end_clock: form.leave_type === 'hourly' ? form.end_clock : null,
+        reason: form.reason || null,
+      }
+      if (!editing) return (await api.post('/leaves', body)).data
+      return (
+        await api.patch(`/leaves/${editing.id}`, {
+          ...body,
+          review_note: form.review_note || null,
+          // وضعیت فقط وقتی فرستاده شود که عوض شده؛ ارسالش «بررسی‌کننده» را هم عوض می‌کند
+          ...(form.status !== editing.status ? { status: form.status } : {}),
         })
-      ).data,
+      ).data
+    },
     onSuccess: () => {
-      toast.success('درخواست مرخصی ثبت شد')
+      toast.success(editing ? 'مرخصی ویرایش شد' : 'درخواست مرخصی ثبت شد')
       setFormOpen(false)
       void qc.invalidateQueries({ queryKey: ['leaves'] })
       void qc.invalidateQueries({ queryKey: ['dashboard'] })
@@ -144,7 +179,7 @@ export default function Leaves() {
                 خروجی اکسل
               </button>
               {editable && (
-                <button className="btn-primary" onClick={() => setFormOpen(true)}>
+                <button className="btn-primary" onClick={openCreate}>
                   <Plus size={16} />
                   ثبت مرخصی
                 </button>
@@ -216,8 +251,22 @@ export default function Leaves() {
                   <td>
                     <span className="badge bg-ink-100 text-ink-600">{leave.leave_type_fa}</span>
                   </td>
-                  <td className="text-ink-600">{toPersianDigits(leave.start_jalali)}</td>
-                  <td className="text-ink-600">{toPersianDigits(leave.end_jalali)}</td>
+                  <td className="text-ink-600">
+                    {toPersianDigits(leave.start_jalali)}
+                    {leave.leave_type === 'hourly' && (
+                      <span className="mr-1.5 text-xs text-ink-400" dir="ltr">
+                        {toPersianDigits(leave.start_clock)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="text-ink-600">
+                    {toPersianDigits(leave.end_jalali)}
+                    {leave.leave_type === 'hourly' && (
+                      <span className="mr-1.5 text-xs text-ink-400" dir="ltr">
+                        {toPersianDigits(leave.end_clock)}
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <StatusBadge status={leave.status} label={leave.status_fa} />
                   </td>
@@ -249,6 +298,13 @@ export default function Leaves() {
                           </>
                         )}
                         <button
+                          onClick={() => openEdit(leave)}
+                          className="rounded-lg p-2 text-brand-600 transition hover:bg-brand-50"
+                          title="ویرایش"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
                           onClick={() => setDeleting(leave)}
                           className="rounded-lg p-2 text-rose-500 transition hover:bg-rose-50"
                           title="حذف"
@@ -268,7 +324,7 @@ export default function Leaves() {
       <Modal
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        title="ثبت مرخصی / مأموریت"
+        title={editing ? 'ویرایش مرخصی / مأموریت' : 'ثبت مرخصی / مأموریت'}
         footer={
           <>
             <button className="btn-ghost" onClick={() => setFormOpen(false)}>
@@ -280,7 +336,7 @@ export default function Leaves() {
               disabled={!form.employee_id || save.isPending}
             >
               {save.isPending && <Spinner className="size-4" />}
-              ثبت
+              {editing ? 'ذخیرهٔ تغییرات' : 'ثبت'}
             </button>
           </>
         }
@@ -352,10 +408,33 @@ export default function Leaves() {
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
             />
           </Field>
+          {editing && (
+            <>
+              <Field label="وضعیت">
+                <select
+                  className="input"
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                >
+                  <option value="pending">در انتظار تأیید</option>
+                  <option value="approved">تأیید شده</option>
+                  <option value="rejected">رد شده</option>
+                </select>
+              </Field>
+              <Field label="یادداشت بررسی">
+                <input
+                  className="input"
+                  value={form.review_note}
+                  onChange={(e) => setForm({ ...form, review_note: e.target.value })}
+                />
+              </Field>
+            </>
+          )}
         </div>
         <p className="mt-3 rounded-xl bg-brand-50 px-3.5 py-2.5 text-xs leading-6 text-brand-800">
-          پس از ثبت، درخواست در وضعیت «در انتظار تأیید» است و تا زمانی که تأیید نشود در گزارش‌ها
-          به‌عنوان غیبت محاسبه می‌شود.
+          {editing
+            ? 'تغییر بازه یا نوع روی گزارش‌ها هم اثر می‌گذارد (اگر مرخصی «تأیید شده» باشد، بلافاصله).'
+            : 'پس از ثبت، درخواست در وضعیت «در انتظار تأیید» است و تا زمانی که تأیید نشود در گزارش‌ها به‌عنوان غیبت محاسبه می‌شود.'}
         </p>
       </Modal>
 

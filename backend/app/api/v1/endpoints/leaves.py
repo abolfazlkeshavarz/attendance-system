@@ -224,10 +224,18 @@ def create_public_leave(payload: PublicLeaveRequest, db: DbSession) -> PublicLea
     )
 
 
+_WINDOW_FIELDS = {"leave_type", "start_jalali_date", "end_jalali_date", "start_clock", "end_clock"}
+
+
 @router.patch("/{leave_id}", response_model=LeaveOut, summary="بررسی یا ویرایش مرخصی")
 def update_leave(
     leave_id: int, payload: LeaveUpdate, db: DbSession, user: ManagerUser
 ) -> LeaveOut:
+    """هم برای تأیید/رد و هم برای ویرایشِ کاملِ مرخصی (نوع، پرسنل، روز، ساعت، دلیل).
+
+    اگر هر یک از فیلدهای بازه (نوع/تاریخ/ساعت) بیاید، بازه از نو محاسبه می‌شود؛
+    فیلدهای بازهٔ ارسال‌نشده از مقدار فعلی پر می‌شوند.
+    """
     leave = db.execute(
         select(LeaveRequest)
         .options(selectinload(LeaveRequest.employee))
@@ -245,7 +253,32 @@ def update_leave(
     if "leave_type" in data and data["leave_type"] not in {t.value for t in LeaveType}:
         raise HTTPException(status_code=400, detail="نوع مرخصی معتبر نیست")
 
+    if "employee_id" in data:
+        if data["employee_id"] is None or db.get(Employee, data["employee_id"]) is None:
+            raise HTTPException(status_code=404, detail="پرسنل یافت نشد")
+
+    if _WINDOW_FIELDS & data.keys():
+        old_type = leave.leave_type
+        old_start = to_tehran(leave.start_at)
+        old_end_excl = to_tehran(leave.end_at)
+        new_type = data.get("leave_type") or old_type
+        # ساعت‌های قبلی فقط وقتی معنا دارند که مرخصی قبلی هم ساعتی بوده؛ برای
+        # روزانه/... end_at نیمه‌شب است و نباید به‌عنوان ساعت پایان ارث برود.
+        was_hourly = old_type == LeaveType.HOURLY.value
+        start_at, end_at = resolve_leave_window(
+            new_type,
+            data.get("start_jalali_date") or jalali_str(old_start.date()),
+            data.get("end_jalali_date")
+            or jalali_str((old_end_excl - timedelta(seconds=1)).date()),
+            data.get("start_clock") or (old_start.strftime("%H:%M") if was_hourly else None),
+            data.get("end_clock") or (old_end_excl.strftime("%H:%M") if was_hourly else None),
+        )
+        leave.start_at = start_at
+        leave.end_at = end_at
+
     for key, value in data.items():
+        if key in _WINDOW_FIELDS - {"leave_type"}:
+            continue  # فقط برای محاسبهٔ بازه بود؛ ستونی با این نام نداریم
         setattr(leave, key, value)
     db.commit()
     db.refresh(leave)

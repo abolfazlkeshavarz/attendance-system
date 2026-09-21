@@ -415,6 +415,88 @@ def test_leaves_export_excel_content(client, admin_headers):
     assert "مراجعه به پزشک" in all_text
 
 
+def test_admin_can_edit_leave(client, admin_headers):
+    """مدیر می‌تواند بازه، نوع، ساعت‌ها، پرسنل و دلیل یک مرخصی را ویرایش کند."""
+    mk = lambda code, fn: client.post(  # noqa: E731
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": code, "first_name": fn, "last_name": "ویرایش"},
+    ).json()
+    emp_a, emp_b = mk("3101", "الف"), mk("3102", "ب")
+
+    today = today_tehran()
+    leave = client.post(
+        f"{API}/leaves",
+        headers=admin_headers,
+        json={
+            "employee_id": emp_a["id"],
+            "leave_type": "daily",
+            "start_jalali_date": jalali_str(today),
+            "end_jalali_date": jalali_str(today),
+            "reason": "اولیه",
+        },
+    ).json()
+    # مرخصی یک‌روزه باید همان روز را به‌عنوان پایان نشان دهد، نه روز بعد
+    assert leave["start_jalali"] == leave["end_jalali"] == jalali_str(today)
+
+    # ۱) تمدید تا دو روز بعد + تغییر دلیل؛ نوع و پرسنل دست‌نخورده
+    later = today + timedelta(days=2)
+    r = client.patch(
+        f"{API}/leaves/{leave['id']}",
+        headers=admin_headers,
+        json={"end_jalali_date": jalali_str(later), "reason": "تمدید شد"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["start_jalali"] == jalali_str(today)
+    assert body["end_jalali"] == jalali_str(later)
+    assert body["reason"] == "تمدید شد"
+    assert body["leave_type"] == "daily" and body["employee_id"] == emp_a["id"]
+
+    # ۲) تبدیل به ساعتی روی یک روز، با ساعت مشخص، و انتقال به پرسنل دیگر
+    r = client.patch(
+        f"{API}/leaves/{leave['id']}",
+        headers=admin_headers,
+        json={
+            "leave_type": "hourly",
+            "employee_id": emp_b["id"],
+            "start_jalali_date": jalali_str(today),
+            "end_jalali_date": jalali_str(today),
+            "start_clock": "09:30",
+            "end_clock": "11:00",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["leave_type"] == "hourly"
+    assert body["employee_id"] == emp_b["id"]
+    assert body["personnel_code"] == "3102"
+    assert (body["start_clock"], body["end_clock"]) == ("09:30", "11:00")
+    assert body["start_jalali"] == body["end_jalali"] == jalali_str(today)
+
+    # ۳) فقط عوض کردن ساعت پایان — ساعت شروع قبلی حفظ می‌شود
+    r = client.patch(
+        f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"end_clock": "12:15"}
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["start_clock"], r.json()["end_clock"]) == ("09:30", "12:15")
+
+    # ۴) اعتبارسنجی: پایان قبل از شروع، پرسنل ناموجود، نوع نامعتبر
+    bad = client.patch(
+        f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"end_clock": "08:00"}
+    )
+    assert bad.status_code == 400
+    assert client.patch(
+        f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"employee_id": 999999}
+    ).status_code == 404
+    assert client.patch(
+        f"{API}/leaves/{leave['id']}", headers=admin_headers, json={"leave_type": "nope"}
+    ).status_code == 400
+
+    # ۵) ویرایش وضعیت تأیید را عوض نمی‌کند مگر صراحتاً بخواهیم
+    assert body["status"] == "pending"
+
+
 def test_tasks_lifecycle(client, admin_headers, employee):
     today = today_tehran()
     task = client.post(
