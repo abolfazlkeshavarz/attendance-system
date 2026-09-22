@@ -20,6 +20,9 @@ const MODEL_URL = '/models'
  */
 export const DEFAULT_THRESHOLD = 0.6
 
+/** هم‌قدم با FACE_AMBIGUITY_MARGIN در تنظیمات سرور — پیش‌فرض تا وقتی گالری بارگذاری شود. */
+export const DEFAULT_AMBIGUITY_MARGIN = 0.08
+
 export interface DetectedFace {
   descriptor: Float32Array
   box: { x: number; y: number; width: number; height: number }
@@ -203,22 +206,43 @@ export function euclidean(a: Float32Array | number[], b: Float32Array | number[]
 
 /**
  * نزدیک‌ترین پرسنل به بردار داده‌شده را پیدا می‌کند.
- * اگر فاصله از آستانه بیشتر باشد، `null` برمی‌گرداند (یعنی شناسایی نشد).
+ *
+ * دو دلیل برای برگرداندنِ `null` (یعنی «شناسایی نشد»، نه یک تطبیقِ نادرست):
+ *   ۱. فاصلهٔ نزدیک‌ترین فرد از آستانه بیشتر است — کسی که اصلاً ثبت‌نام
+ *      نشده.
+ *   ۲. دو پرسنلِ متفاوت به‌اندازهٔ کافی به هم نزدیک‌اند (کمتر از
+ *      ambiguityMargin فاصله دارند) که نتوان مطمئن بود کدام است — مثلاً
+ *      خواهر/برادرِ شبیه به هم که فقط یکی‌شان ثبت‌نام کرده. حدس زدن اینجا از
+ *      رد کردن و هدایت به کد پرسنلی/PIN بدتر است.
  */
 export function findBestMatch(
   descriptor: Float32Array,
   candidates: MatchCandidate[],
   threshold = DEFAULT_THRESHOLD,
+  ambiguityMargin = DEFAULT_AMBIGUITY_MARGIN,
 ): MatchResult | null {
   let best: MatchResult | null = null
+  // نزدیک‌ترین فاصلهٔ یک نامزدِ «دیگر» (غیر از فردِ فعلاً برنده) — برای تشخیصِ ابهام
+  let runnerUpDistance = Infinity
+
   for (const candidate of candidates) {
+    let candidateBest = Infinity
     for (const vector of candidate.vectors) {
       if (vector.length !== descriptor.length) continue
-      const distance = euclidean(descriptor, vector)
-      if (!best || distance < best.distance) best = { candidate, distance }
+      candidateBest = Math.min(candidateBest, euclidean(descriptor, vector))
+    }
+    if (candidateBest === Infinity) continue
+
+    if (!best || candidateBest < best.distance) {
+      if (best) runnerUpDistance = Math.min(runnerUpDistance, best.distance)
+      best = { candidate, distance: candidateBest }
+    } else {
+      runnerUpDistance = Math.min(runnerUpDistance, candidateBest)
     }
   }
+
   if (!best || best.distance > threshold) return null
+  if (runnerUpDistance - best.distance < ambiguityMargin) return null
   return best
 }
 

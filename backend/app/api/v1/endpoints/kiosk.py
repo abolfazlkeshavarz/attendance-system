@@ -55,6 +55,7 @@ def handshake(device: CurrentDevice, db: DbSession) -> dict:
         "today_jalali": jalali_long(local.date()),
         "settings": {
             "face_threshold": settings.FACE_MATCH_THRESHOLD,
+            "face_ambiguity_margin": settings.FACE_AMBIGUITY_MARGIN,
             "min_seconds_between_punches": settings.MIN_SECONDS_BETWEEN_PUNCHES,
             "timezone": settings.TIMEZONE,
             "require_liveness": settings.REQUIRE_LIVENESS,

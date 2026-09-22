@@ -168,6 +168,46 @@ def test_server_side_face_identify(client, device, employee):
     assert res2.json()["matched"] is False
 
 
+def test_face_identify_rejects_ambiguous_lookalikes(client, admin_headers, device):
+    """دو پرسنلِ شبیه به هم (مثل خواهر/برادر) — تشخیص نباید حدس بزند کدام است."""
+    headers = {"X-Device-Key": device["api_key"]}
+
+    def register(code, first_name, vector):
+        emp = client.post(
+            f"{API}/employees",
+            headers=admin_headers,
+            json={"personnel_code": code, "first_name": first_name, "last_name": "شبیه"},
+        ).json()
+        r = client.post(
+            f"{API}/employees/{emp['id']}/faces",
+            headers=admin_headers,
+            json={"vector": vector, "quality": 0.9},
+        )
+        assert r.status_code == 201, r.text
+        return emp
+
+    base = [0.30 + i * 0.001 for i in range(512)]
+    # فاصلهٔ اقلیدسی این دو از هم ~۰.۳ — «شبیه به هم» ولی نه یکسان
+    sibling = [v + 0.01326 for v in base]
+    emp_a = register("3201", "برادر یک", base)
+    emp_b = register("3202", "برادر دو", sibling)
+
+    # درست وسط این دو نفر — با هر دو تقریباً هم‌فاصله، پس مبهم است
+    midpoint = [(b + s) / 2 for b, s in zip(base, sibling)]
+    ambiguous = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": midpoint})
+    assert ambiguous.status_code == 200
+    assert ambiguous.json()["matched"] is False
+
+    # ولی یک بردارِ واقعاً نزدیک به برادرِ اول باید قطعی و درست تشخیص داده شود
+    close_to_a = [v + 0.00001 for v in base]
+    clear = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": close_to_a})
+    assert clear.status_code == 200
+    body = clear.json()
+    assert body["matched"] is True
+    assert body["employee_id"] == emp_a["id"]
+    assert body["employee_id"] != emp_b["id"]
+
+
 @pytest.fixture(scope="module")
 def work_day(client, admin_headers):
     """آخرین روز کاریِ گذشته (شنبه تا چهارشنبه و غیرتعطیل).

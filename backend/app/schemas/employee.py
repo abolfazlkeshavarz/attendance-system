@@ -161,6 +161,10 @@ class FaceGallery(BaseModel):
     model_name: str
     dim: int
     threshold: float
+    # حداقل فاصلهٔ لازم بین نفرِ اول و دومِ نامزدها تا تشخیص «قطعی» شمرده شود؛
+    # نزدیک‌تر از این یعنی دو پرسنلِ متفاوت به‌اندازهٔ کافی شبیه‌اند که نتوان
+    # مطمئن بود (مثلاً خواهر/برادر) — findBestMatch در آن حالت null برمی‌گرداند.
+    ambiguity_margin: float
     version: str          # برای تشخیص تغییر و دانلود مجدد در تبلت
     generated_at: str
     items: list[FaceGalleryItem]

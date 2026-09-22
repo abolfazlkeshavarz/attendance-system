@@ -266,6 +266,7 @@ export interface FaceGallery {
   model_name: string
   dim: number
   threshold: number
+  ambiguity_margin: number
   version: string
   generated_at: string
   items: GalleryItem[]

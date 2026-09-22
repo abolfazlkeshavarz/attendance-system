@@ -207,6 +207,11 @@ export function useCamera(active: boolean) {
   return { videoRef, error, running }
 }
 
+// هر چند وقت یک‌بار نسخهٔ گالری روی سرور را دوباره چک کند — حذفِ چهرهٔ یک
+// پرسنل (مثلاً بعد از قطع همکاری) باید طیِ چند دقیقه اثر بگذارد، نه فقط با
+// رفرشِ دستیِ کیوسک.
+const GALLERY_REFRESH_MS = 2 * 60_000
+
 /** گالری چهره‌ها: از سرور می‌گیرد، در IndexedDB نگه می‌دارد، آفلاین هم کار می‌کند. */
 export function useGallery(enabled: boolean) {
   const [gallery, setGallery] = useState<FaceGallery | null>(null)
@@ -251,7 +256,13 @@ export function useGallery(enabled: boolean) {
   )
 
   useEffect(() => {
-    if (enabled) void refresh()
+    if (!enabled) return
+    void refresh()
+    // یک کیوسک معمولاً هفته‌ها بدون رفرشِ دستی باز می‌ماند — بدون این تایمر،
+    // حذف/افزودنِ چهرهٔ یک پرسنل تا رفرشِ بعدیِ صفحه روی آن دستگاه اثر
+    // نمی‌گذاشت (این آدرس ارزان است: فقط یک هش برمی‌گرداند، نه کل گالری را).
+    const timer = setInterval(() => void refresh(), GALLERY_REFRESH_MS)
+    return () => clearInterval(timer)
   }, [enabled, refresh])
 
   return { gallery, candidates, savedAt, syncing, refresh }

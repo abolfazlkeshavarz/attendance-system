@@ -21,6 +21,7 @@ import type { Employee, Page } from '../lib/types'
 import { jalaliLong, toPersianDigits } from '../lib/jalali'
 import {
   captureSnapshot,
+  DEFAULT_AMBIGUITY_MARGIN,
   DEFAULT_THRESHOLD,
   distanceToConfidence,
   faceEngine,
@@ -62,6 +63,7 @@ export default function Kiosk() {
 
   const { gallery, candidates, savedAt, syncing, refresh } = useGallery(paired)
   const threshold = gallery?.threshold ?? DEFAULT_THRESHOLD
+  const ambiguityMargin = gallery?.ambiguity_margin ?? DEFAULT_AMBIGUITY_MARGIN
   const models = useFaceModels(paired)
   const kioskSettings = useKioskSettings(paired)
   const livenessRequired = kioskSettings.require_liveness
@@ -135,7 +137,12 @@ export default function Kiosk() {
         return
       }
 
-      const match: MatchResult | null = findBestMatch(face.descriptor, candidates, threshold)
+      const match: MatchResult | null = findBestMatch(
+        face.descriptor,
+        candidates,
+        threshold,
+        ambiguityMargin,
+      )
       if (!match) {
         setHint('شناسایی نشدید — از کد پرسنلی استفاده کنید')
         return
@@ -192,7 +199,19 @@ export default function Kiosk() {
     } finally {
       busyRef.current = false
     }
-  }, [candidates, faceEnabled, livenessRequired, models.ready, resetChallenge, running, screen, sync, threshold, videoRef])
+  }, [
+    ambiguityMargin,
+    candidates,
+    faceEnabled,
+    livenessRequired,
+    models.ready,
+    resetChallenge,
+    running,
+    screen,
+    sync,
+    threshold,
+    videoRef,
+  ])
 
   useEffect(() => {
     if (screen !== 'scan') return

@@ -62,7 +62,10 @@ def load_vectors(db: Session) -> tuple[list[int], np.ndarray]:
 def identify(db: Session, vector: list[float]) -> tuple[int | None, float]:
     """نزدیک‌ترین پرسنل به بردار داده‌شده را پیدا می‌کند.
 
-    خروجی: (شناسه پرسنل یا None، فاصله). اگر فاصله از آستانه بیشتر باشد None.
+    خروجی: (شناسه پرسنل یا None، فاصله). اگر فاصله از آستانه بیشتر باشد، یا دو
+    پرسنلِ متفاوت به‌اندازهٔ کافی نزدیک به هم باشند که نتوان مطمئن بود (مثلاً
+    دو خواهر/برادرِ شبیه به هم — یکی فقط ثبت‌نام کرده و دیگری هم تأیید
+    می‌گرفت)، None برمی‌گردد.
     """
     ids, mat = load_vectors(db)
     if not ids:
@@ -71,11 +74,21 @@ def identify(db: Session, vector: list[float]) -> tuple[int | None, float]:
     if mat.shape[1] != probe.shape[0]:
         return None, float("inf")
     dists = np.linalg.norm(mat - probe, axis=1)
-    best = int(np.argmin(dists))
-    best_dist = float(dists[best])
+
+    # هر پرسنل چند بردار دارد؛ فاصلهٔ او = نزدیک‌ترینِ بردارهایش.
+    per_employee: dict[int, float] = {}
+    for emp_id, d in zip(ids, dists):
+        d = float(d)
+        if emp_id not in per_employee or d < per_employee[emp_id]:
+            per_employee[emp_id] = d
+    ranked = sorted(per_employee.items(), key=lambda kv: kv[1])
+
+    best_id, best_dist = ranked[0]
     if best_dist > settings.FACE_MATCH_THRESHOLD:
         return None, best_dist
-    return ids[best], best_dist
+    if len(ranked) > 1 and ranked[1][1] - best_dist < settings.FACE_AMBIGUITY_MARGIN:
+        return None, best_dist
+    return best_id, best_dist
 
 
 def build_gallery(db: Session) -> FaceGallery:
@@ -115,6 +128,7 @@ def build_gallery(db: Session) -> FaceGallery:
         model_name="face-api-128",
         dim=settings.FACE_EMBEDDING_DIM,
         threshold=settings.FACE_MATCH_THRESHOLD,
+        ambiguity_margin=settings.FACE_AMBIGUITY_MARGIN,
         version=hasher.hexdigest()[:16] or "empty",
         generated_at=now_utc().isoformat(),
         items=items,
