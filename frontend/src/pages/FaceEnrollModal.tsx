@@ -6,7 +6,7 @@ import { api, errorMessage } from '../lib/api'
 import type { Employee, FaceSample } from '../lib/types'
 import { cropFace, faceEngine } from '../lib/faceEngine'
 import { toPersianDigits } from '../lib/jalali'
-import { Modal, Spinner, useToast } from '../components/ui'
+import { ConfirmDialog, Modal, Spinner, useToast } from '../components/ui'
 
 const TARGET_SAMPLES = 3
 // یک پیامِ ثابت برای همهٔ نمونه‌ها — نه چرخاندنِ سر، نه ژستِ خاص. تنوعِ لازم
@@ -114,6 +114,25 @@ export function FaceEnrollModal({
       (await api.delete(`/employees/${employee!.id}/faces/${faceId}`)).data,
     onSuccess: () => {
       toast.success('نمونه حذف شد')
+      void qc.invalidateQueries({ queryKey: ['faces', employee?.id] })
+      void qc.invalidateQueries({ queryKey: ['employees'] })
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  })
+
+  // برای شروعِ دوباره (مثلاً وقتی دو نفر خیلی شبیه به هم قاطی می‌شوند) —
+  // به‌جای زدنِ دکمهٔ حذف برای هر نمونه، یک‌جا پاک می‌کند. سرور راهِ حذفِ
+  // دسته‌ای ندارد، پس پشتِ سرِ هم حذف می‌کنیم.
+  const [confirmClearAll, setConfirmClearAll] = useState(false)
+  const clearAll = useMutation({
+    mutationFn: async () => {
+      for (const s of samples ?? []) {
+        await api.delete(`/employees/${employee!.id}/faces/${s.id}`)
+      }
+    },
+    onSuccess: () => {
+      toast.success('همهٔ نمونه‌ها حذف شد')
+      setConfirmClearAll(false)
       void qc.invalidateQueries({ queryKey: ['faces', employee?.id] })
       void qc.invalidateQueries({ queryKey: ['employees'] })
     },
@@ -291,17 +310,28 @@ export function FaceEnrollModal({
         </div>
 
         <div>
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center justify-between gap-2">
             <h4 className="font-bold text-ink-800">نمونه‌های ثبت‌شده</h4>
-            <span
-              className={clsx(
-                'badge',
-                enough ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700',
+            <div className="flex items-center gap-2">
+              <span
+                className={clsx(
+                  'badge',
+                  enough ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700',
+                )}
+              >
+                {enough ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
+                {toPersianDigits(count)} از {toPersianDigits(TARGET_SAMPLES)}
+              </span>
+              {count > 0 && (
+                <button
+                  onClick={() => setConfirmClearAll(true)}
+                  className="rounded-lg p-1.5 text-ink-400 transition hover:bg-rose-50 hover:text-rose-600"
+                  title="حذف همه نمونه‌ها و شروع دوباره"
+                >
+                  <Trash2 size={14} />
+                </button>
               )}
-            >
-              {enough ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
-              {toPersianDigits(count)} از {toPersianDigits(TARGET_SAMPLES)}
-            </span>
+            </div>
           </div>
 
           {!enough && (
@@ -354,6 +384,14 @@ export function FaceEnrollModal({
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmClearAll}
+        message={`همهٔ ${toPersianDigits(count)} نمونهٔ چهرهٔ ${employee.full_name} حذف شود؟ بعد از این می‌توانید جلوی دوربین بایستید تا از نو ثبت شود.`}
+        busy={clearAll.isPending}
+        onConfirm={() => clearAll.mutate()}
+        onCancel={() => setConfirmClearAll(false)}
+      />
     </Modal>
   )
 }
