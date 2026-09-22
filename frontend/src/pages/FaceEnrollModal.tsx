@@ -9,28 +9,32 @@ import { toPersianDigits } from '../lib/jalali'
 import { Modal, Spinner, useToast } from '../components/ui'
 
 const TARGET_SAMPLES = 3
-const POSES = [
-  'مستقیم به دوربین نگاه کنید',
-  'کمی سر را به راست بچرخانید',
-  'کمی سر را به چپ بچرخانید',
-  'کمی لبخند بزنید',
-]
+// یک پیامِ ثابت برای همهٔ نمونه‌ها — نه چرخاندنِ سر، نه ژستِ خاص. تنوعِ لازم
+// بین سه نمونه از تفاوتِ طبیعیِ فریم‌به‌فریم (پلک، حالتِ چهره) در چند ثانیه
+// پشت‌سرهم به دست می‌آید، نه از دستورِ اضافه به کاربر.
+const HOLD_HINT = 'مستقیم به دوربین نگاه کنید'
 
 // چند تیکِ پیاپیِ «چهره در کادر و اندازه مناسب» قبل از ثبتِ خودکار — تا از
 // گرفتن یک فریمِ گذرا و لرزان جلوگیری شود. با تیک ۳۵۰ میلی‌ثانیه‌ای یعنی حدود
 // ۷۰۰ میلی‌ثانیه ثبات لازم است.
 const STABLE_TICKS_BEFORE_CAPTURE = 2
 const CHECK_INTERVAL_MS = 350
-// بعد از هر ثبتِ خودکار، این مدت مکث تا هم مهلتِ تغییرِ حالت (POSES) داده شود
-// هم دو نمونه تقریباً یکسانِ پشت‌سرهم گرفته نشود.
-const CAPTURE_COOLDOWN_MS = 1_400
+// بعد از هر ثبتِ خودکار، این مدت مکثِ کوتاه تا دو نمونه تقریباً یکسانِ
+// پشت‌سرهم گرفته نشود — دیگر برای عوض‌کردنِ ژست لازم نیست چون ژستی خواسته
+// نمی‌شود.
+const CAPTURE_COOLDOWN_MS = 900
+// بعد از هر ثبتِ خودکار، این مدت علامتِ «✓ ثبت شد» به‌جای راهنما نشان داده می‌شود
+const JUST_CAPTURED_FLASH_MS = 700
 
 /**
  * ثبت چهره پرسنل.
  *
  * بردار ویژگی همین‌جا در مرورگر استخراج می‌شود و فقط ۱۲۸ عدد به سرور می‌رود —
  * تصویر خام اختیاری است و صرفاً برای نمایش پروفایل ذخیره می‌شود.
- * چند نمونه از زوایای مختلف، دقت تشخیص روی تبلت را به‌طور محسوسی بالا می‌برد.
+ *
+ * کاملاً خودکار: هیچ دکمه‌ای برای ثبت یا ژست/چرخشِ سرِ خاصی لازم نیست — کافی
+ * است فرد جلوی دوربین بایستد، سه نمونه پشتِ سرِ هم (با تفاوتِ طبیعیِ
+ * فریم‌به‌فریم) گرفته می‌شود و به‌محضِ تکمیل، به مدیر اعلام می‌شود.
  */
 export function FaceEnrollModal({
   employee,
@@ -48,6 +52,7 @@ export function FaceEnrollModal({
   const [cameraError, setCameraError] = useState('')
   const [capturing, setCapturing] = useState(false)
   const [liveState, setLiveState] = useState<'searching' | 'ok' | 'far'>('searching')
+  const [justCaptured, setJustCaptured] = useState(false)
 
   const { data: samples, isLoading } = useQuery({
     queryKey: ['faces', employee?.id],
@@ -140,8 +145,8 @@ export function FaceEnrollModal({
   //
   // به‌جای اینکه مدیر برای هر نمونه دکمه بزند (کند و برای هر پرسنل چند بار
   // تکرار می‌شد)، همین که چهره چند فریمِ پیاپی در کادر و با اندازهٔ مناسب
-  // دیده شود، خودش ثبت می‌شود. بین دو ثبت یک مکث کوتاه هست تا هم فرصتِ عوض
-  // کردنِ حالت (POSES) بدهد هم دو فریمِ تقریباً یکسان پشت سرِ هم گرفته نشود.
+  // دیده شود، خودش ثبت می‌شود — بدون هیچ ژست یا چرخشِ سرِ خاصی. بین دو ثبت
+  // فقط یک مکثِ کوتاه هست تا دو فریمِ کاملاً یکسانِ پشت‌سرِ هم گرفته نشود.
   const capturingRef = useRef(false)
   const stableTicksRef = useRef(0)
   const cooldownRef = useRef(false)
@@ -180,6 +185,8 @@ export function FaceEnrollModal({
           image_base64: cropFace(video, face.box),
           quality: Math.round(face.score * 100) / 100,
         })
+        setJustCaptured(true)
+        setTimeout(() => setJustCaptured(false), JUST_CAPTURED_FLASH_MS)
       } catch {
         // enroll.onError پیام خطا را خودش نشان می‌دهد؛ حلقه ادامه پیدا می‌کند
       } finally {
@@ -266,7 +273,11 @@ export function FaceEnrollModal({
             )}
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-900 to-transparent px-4 py-3 text-center text-sm text-white">
               {liveState === 'ok'
-                ? POSES[count % POSES.length]
+                ? justCaptured
+                  ? '✓ ثبت شد'
+                  : capturing
+                    ? 'در حال ثبت…'
+                    : HOLD_HINT
                 : liveState === 'far'
                   ? 'کمی نزدیک‌تر شوید'
                   : 'چهره‌ای در کادر دیده نمی‌شود'}
@@ -295,8 +306,8 @@ export function FaceEnrollModal({
 
           {!enough && (
             <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-6 text-amber-800">
-              برای تشخیص مطمئن روی تبلت، حداقل {toPersianDigits(TARGET_SAMPLES)} نمونه از زوایای
-              مختلف ثبت کنید.
+              فقط جلوی دوربین بایستید — {toPersianDigits(TARGET_SAMPLES)} نمونه به‌طور خودکار
+              پشتِ سرِ هم ثبت می‌شود.
             </p>
           )}
 
