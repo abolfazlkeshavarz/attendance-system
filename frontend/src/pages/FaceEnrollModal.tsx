@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Camera, CheckCircle2, RefreshCw, ScanFace, Trash2, TriangleAlert } from 'lucide-react'
 import clsx from 'clsx'
@@ -15,6 +15,15 @@ const POSES = [
   'کمی سر را به چپ بچرخانید',
   'کمی لبخند بزنید',
 ]
+
+// چند تیکِ پیاپیِ «چهره در کادر و اندازه مناسب» قبل از ثبتِ خودکار — تا از
+// گرفتن یک فریمِ گذرا و لرزان جلوگیری شود. با تیک ۳۵۰ میلی‌ثانیه‌ای یعنی حدود
+// ۷۰۰ میلی‌ثانیه ثبات لازم است.
+const STABLE_TICKS_BEFORE_CAPTURE = 2
+const CHECK_INTERVAL_MS = 350
+// بعد از هر ثبتِ خودکار، این مدت مکث تا هم مهلتِ تغییرِ حالت (POSES) داده شود
+// هم دو نمونه تقریباً یکسانِ پشت‌سرهم گرفته نشود.
+const CAPTURE_COOLDOWN_MS = 1_400
 
 /**
  * ثبت چهره پرسنل.
@@ -85,25 +94,10 @@ export function FaceEnrollModal({
     }
   }, [open])
 
-  // بازخورد زنده: آیا چهره در کادر هست و اندازه‌اش مناسب است؟
-  useEffect(() => {
-    if (!open || !modelsReady) return
-    const timer = setInterval(async () => {
-      const video = videoRef.current
-      if (!video || video.readyState < 2 || capturing) return
-      const face = await faceEngine.detect(video)
-      if (!face) setLiveState('searching')
-      else if (face.box.width < video.videoWidth * 0.16) setLiveState('far')
-      else setLiveState('ok')
-    }, 600)
-    return () => clearInterval(timer)
-  }, [open, modelsReady, capturing])
-
   const enroll = useMutation({
     mutationFn: async (payload: { vector: number[]; image_base64: string | null; quality: number }) =>
       (await api.post(`/employees/${employee!.id}/faces`, payload)).data,
     onSuccess: () => {
-      toast.success('نمونه چهره ثبت شد')
       void qc.invalidateQueries({ queryKey: ['faces', employee?.id] })
       void qc.invalidateQueries({ queryKey: ['employees'] })
     },
@@ -121,34 +115,90 @@ export function FaceEnrollModal({
     onError: (err) => toast.error(errorMessage(err)),
   })
 
-  const capture = useCallback(async () => {
-    const video = videoRef.current
-    if (!video || !modelsReady) return
-    setCapturing(true)
-    try {
+  // تعداد نمونه‌های فعلی و وضعیت «کاملِ» ثبت‌نام، به‌صورت ref هم — تا حلقهٔ
+  // زیر (که خودش داخل useEffect است) بدون بازساخته‌شدن هر تغییرِ count همیشه
+  // آخرین مقدار را ببیند.
+  const count = samples?.length ?? 0
+  const enough = count >= TARGET_SAMPLES
+  const countRef = useRef(count)
+  useEffect(() => {
+    countRef.current = count
+  }, [count])
+
+  // وقتی نمونهٔ سوم رسید، همان لحظه به کاربر خبر بده — نیازی به بستن/چک‌کردن
+  // دستی نیست.
+  const announcedRef = useRef(false)
+  useEffect(() => {
+    if (enough && !announcedRef.current) {
+      announcedRef.current = true
+      toast.success(`چهرهٔ ${employee?.full_name ?? 'پرسنل'} با موفقیت ثبت شد`)
+    }
+    if (!enough) announcedRef.current = false
+  }, [enough, employee, toast])
+
+  // ------------------------------------------------- ثبتِ خودکارِ نمونه‌ها
+  //
+  // به‌جای اینکه مدیر برای هر نمونه دکمه بزند (کند و برای هر پرسنل چند بار
+  // تکرار می‌شد)، همین که چهره چند فریمِ پیاپی در کادر و با اندازهٔ مناسب
+  // دیده شود، خودش ثبت می‌شود. بین دو ثبت یک مکث کوتاه هست تا هم فرصتِ عوض
+  // کردنِ حالت (POSES) بدهد هم دو فریمِ تقریباً یکسان پشت سرِ هم گرفته نشود.
+  const capturingRef = useRef(false)
+  const stableTicksRef = useRef(0)
+  const cooldownRef = useRef(false)
+
+  useEffect(() => {
+    if (!open || !modelsReady) return
+    let cancelled = false
+
+    const timer = setInterval(async () => {
+      if (cancelled || capturingRef.current || cooldownRef.current) return
+      if (countRef.current >= TARGET_SAMPLES) return
+      const video = videoRef.current
+      if (!video || video.readyState < 2) return
+
       const face = await faceEngine.detect(video)
       if (!face) {
-        toast.error('چهره‌ای در تصویر پیدا نشد. نور محیط و فاصله را بررسی کنید.')
+        setLiveState('searching')
+        stableTicksRef.current = 0
         return
       }
       if (face.box.width < video.videoWidth * 0.16) {
-        toast.error('چهره خیلی کوچک است — به دوربین نزدیک‌تر شوید.')
+        setLiveState('far')
+        stableTicksRef.current = 0
         return
       }
-      await enroll.mutateAsync({
-        vector: Array.from(face.descriptor),
-        image_base64: cropFace(video, face.box),
-        quality: Math.round(face.score * 100) / 100,
-      })
-    } finally {
-      setCapturing(false)
+      setLiveState('ok')
+      stableTicksRef.current += 1
+      if (stableTicksRef.current < STABLE_TICKS_BEFORE_CAPTURE) return
+      stableTicksRef.current = 0
+
+      capturingRef.current = true
+      setCapturing(true)
+      try {
+        await enroll.mutateAsync({
+          vector: Array.from(face.descriptor),
+          image_base64: cropFace(video, face.box),
+          quality: Math.round(face.score * 100) / 100,
+        })
+      } catch {
+        // enroll.onError پیام خطا را خودش نشان می‌دهد؛ حلقه ادامه پیدا می‌کند
+      } finally {
+        capturingRef.current = false
+        setCapturing(false)
+        cooldownRef.current = true
+        setTimeout(() => {
+          cooldownRef.current = false
+        }, CAPTURE_COOLDOWN_MS)
+      }
+    }, CHECK_INTERVAL_MS)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
     }
-  }, [enroll, modelsReady, toast])
+  }, [open, modelsReady, enroll])
 
   if (!employee) return null
-
-  const count = samples?.length ?? 0
-  const enough = count >= TARGET_SAMPLES
 
   return (
     <Modal
@@ -161,18 +211,23 @@ export function FaceEnrollModal({
           <button className="btn-ghost" onClick={onClose}>
             بستن
           </button>
-          <button
-            className="btn-primary"
-            onClick={() => void capture()}
-            disabled={!modelsReady || capturing || enroll.isPending || !!cameraError}
-          >
-            {capturing || enroll.isPending ? (
-              <Spinner className="size-4" />
-            ) : (
-              <Camera size={16} />
-            )}
-            ثبت نمونه {toPersianDigits(count + 1)}
-          </button>
+          {enough ? (
+            <span className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
+              <CheckCircle2 size={16} />
+              ثبت کامل شد
+            </span>
+          ) : (
+            <span className="flex items-center gap-2 rounded-xl bg-brand-50 px-4 py-2.5 text-sm font-medium text-brand-700">
+              {capturing || enroll.isPending ? (
+                <Spinner className="size-4" />
+              ) : (
+                <Camera size={16} />
+              )}
+              {capturing || enroll.isPending
+                ? 'در حال ثبت نمونه…'
+                : 'به‌محض دیدنِ چهره در کادر، خودکار ثبت می‌شود'}
+            </span>
+          )}
         </>
       }
     >

@@ -7,11 +7,11 @@ import {
   KeyRound,
   Lock,
   RefreshCw,
-  RotateCw,
   ScanFace,
   Search,
   ShieldCheck,
   ShieldOff,
+  Timer,
   User as UserIcon,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -27,7 +27,6 @@ import {
   findBestMatch,
   type MatchResult,
 } from '../lib/faceEngine'
-import { LivenessChallenge } from '../lib/liveness'
 import { FaceEnrollModal } from '../pages/FaceEnrollModal'
 import { FingerprintEnrollModal } from '../pages/FingerprintEnrollModal'
 import {
@@ -48,6 +47,12 @@ type Screen = 'setup' | 'scan' | 'result' | 'pin' | 'admin-login' | 'admin'
 
 // دستگاه در دسترس عموم است؛ اگر مدیر چند دقیقه بی‌کار بماند، خودکار خارج می‌شود
 const ADMIN_IDLE_TIMEOUT_MS = 120_000
+
+// چقدر باید تطبیقِ همان فرد پیوسته روی دوربین بماند تا تردد ثبت شود — به‌جای
+// چرخاندن سر (که کند و برای خیلی از پرسنل گیج‌کننده بود)، فقط باید چند ثانیه
+// جلوی دوربین بماند. اگر REQUIRE_LIVENESS در سرور خاموش باشد، همین مرحله هم
+// رد می‌شود و ثبت بلافاصله (با اولین فریمِ تطبیق‌یافته) انجام می‌شود.
+const FACE_HOLD_MS = 2_000
 
 export default function Kiosk() {
   const [screen, setScreen] = useState<Screen>(hasDeviceKey() ? 'scan' : 'setup')
@@ -89,20 +94,15 @@ export default function Kiosk() {
   const busyRef = useRef(false)
   const cooldownRef = useRef<Record<number, number>>({})
 
-  // چالش زنده بودن، مخصوص همان فردی که الان شناسایی شده است
-  const challengeRef = useRef(new LivenessChallenge())
-  useEffect(() => {
-    challengeRef.current = new LivenessChallenge({
-      turnThreshold: kioskSettings.liveness_turn_threshold,
-      timeoutMs: kioskSettings.liveness_timeout_seconds * 1000,
-    })
-  }, [kioskSettings.liveness_turn_threshold, kioskSettings.liveness_timeout_seconds])
-  const challengeForRef = useRef<number | null>(null)
+  // نگه‌داشتنِ نگاه، مخصوص همان فردی که الان شناسایی شده — با تعویض فرد یا از
+  // دست رفتن چهره از نو شمرده می‌شود.
+  const dwellEmployeeRef = useRef<number | null>(null)
+  const dwellStartRef = useRef(0)
   const missingFramesRef = useRef(0)
 
   const resetChallenge = useCallback(() => {
-    challengeRef.current.reset()
-    challengeForRef.current = null
+    dwellEmployeeRef.current = null
+    dwellStartRef.current = 0
     setLiveness({ active: false, progress: 0, prompt: '' })
   }, [])
 
@@ -147,25 +147,20 @@ export default function Kiosk() {
         setHint(`${match.candidate.fullName} — تردد شما ثبت شده است`)
         return
       }
-      // ---------------------------------------------------- بررسی زنده بودن
-      // بدون این مرحله، گرفتن عکس چاپیِ یک همکار جلوی دوربین کافی است تا
-      // تردد به نام او ثبت شود.
+      // ------------------------------------------------- نگه‌داشتنِ نگاه
+      // به‌جای چرخاندنِ سر، فقط چند ثانیه تطبیقِ پیوسته با همین فرد کافی است —
+      // هم سریع‌تر است هم برای پرسنل قابل‌فهم‌تر. جلوی گرفتن یک عکس و رد شدنِ
+      // آنی هم می‌گیرد (باید چند ثانیه واقعی جلوی دوربین گرفته شود)، هرچند مثل
+      // چرخشِ سر در برابر یک عکسِ ثابتِ نگه‌داشته‌شده مقاوم نیست.
       if (livenessRequired) {
-        const challenge = challengeRef.current
-        if (challengeForRef.current !== match.candidate.employeeId) {
-          challengeForRef.current = match.candidate.employeeId
-          challenge.start()
+        if (dwellEmployeeRef.current !== match.candidate.employeeId) {
+          dwellEmployeeRef.current = match.candidate.employeeId
+          dwellStartRef.current = Date.now()
         }
-        challenge.push({ yaw: face.yaw, ear: face.ear })
-
-        if (challenge.state === 'timeout') {
-          resetChallenge()
-          setHint('تأیید انجام نشد — دوباره تلاش کنید')
-          return
-        }
-        if (!challenge.passed) {
-          setLiveness({ active: true, progress: challenge.progress, prompt: challenge.prompt })
-          setHint(`${match.candidate.fullName} — ${challenge.prompt}`)
+        const elapsed = Date.now() - dwellStartRef.current
+        if (elapsed < FACE_HOLD_MS) {
+          setLiveness({ active: true, progress: Math.min(1, elapsed / FACE_HOLD_MS), prompt: 'همین‌طور نگاه کنید' })
+          setHint(`${match.candidate.fullName} — نگه دارید…`)
           return
         }
       }
@@ -389,10 +384,10 @@ function ScanOverlay({
       {liveness.active && (
         <div className="w-72">
           <div className="mb-2 flex items-center justify-center gap-2 text-amber-300">
-            <RotateCw size={18} />
+            <Timer size={18} />
             <span className="text-sm font-medium">{liveness.prompt}</span>
           </div>
-          {/* نوار پیشرفت، هم راهنمای کاربر است و هم برای تنظیم آستانه کمک می‌کند */}
+          {/* نوار پیشرفتِ ~۲ ثانیه‌ای نگه‌داشتنِ نگاه */}
           <div className="h-2 overflow-hidden rounded-full bg-white/15">
             <div
               className="h-full rounded-full bg-amber-400 transition-all duration-200"
@@ -400,7 +395,7 @@ function ScanOverlay({
             />
           </div>
           <p className="mt-2 text-center text-xs text-ink-400">
-            این مرحله جلوی ثبت تردد با عکس را می‌گیرد
+            فقط چند لحظه — همین‌طور جلوی دوربین بمانید
           </p>
         </div>
       )}
