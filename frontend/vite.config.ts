@@ -50,29 +50,9 @@ export default defineConfig({
       // متوجهٔ نسخهٔ تازه نشود.
       injectRegister: false,
       includeAssets: ['favicon.svg'],
-      manifest: {
-        name: 'سامانه حضور و غیاب',
-        short_name: 'حضور و غیاب',
-        description: 'ثبت ورود و خروج پرسنل با تشخیص چهره',
-        lang: 'fa',
-        dir: 'rtl',
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
-        display: 'fullscreen',
-        orientation: 'landscape',
-        start_url: '/kiosk',
-        icons: [
-          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
-          // اندروید آیکون را داخل شکل دلخواه خودش می‌برد و نیاز به حاشیه امن دارد
-          {
-            src: 'icon-maskable-512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'maskable',
-          },
-        ],
-      },
+      // مانیفست‌ها دستی در public/ هستند: kiosk (تبلت) و panel (پنل مدیریت).
+      // index.html بر اساس مسیر یکی را انتخاب می‌کند.
+      manifest: false,
       workbox: {
         maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,bin}'],

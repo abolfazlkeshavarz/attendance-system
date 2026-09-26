@@ -89,7 +89,7 @@ server {
     location = /index.html {
         add_header Cache-Control "no-cache";
     }
-    location = /manifest.webmanifest {
+    location ~ ^/(manifest|panel)\.webmanifest$ {
         add_header Cache-Control "no-cache";
     }
 

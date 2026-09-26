@@ -1,0 +1,26 @@
+{
+  "id": "/panel",
+  "name": "پنل مدیریت حضور و غیاب",
+  "short_name": "مدیریت",
+  "description": "مدیریت پرسنل، ترددها، مرخصی‌ها و گزارش‌ها",
+  "lang": "fa",
+  "dir": "rtl",
+  "theme_color": "#ffffff",
+  "background_color": "#f6f7f9",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": "/",
+  "scope": "/",
+  "shortcuts": [
+    { "name": "داشبورد", "url": "/" },
+    { "name": "پرسنل", "url": "/employees" },
+    { "name": "ترددها", "url": "/attendance" },
+    { "name": "مرخصی‌ها", "url": "/leaves" },
+    { "name": "گزارش‌ها", "url": "/reports" }
+  ],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
