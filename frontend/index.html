@@ -8,13 +8,17 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>سامانه حضور و غیاب</title>
-      <link rel="manifest" id="app-manifest" href="/panel.webmanifest" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+      <link rel="apple-touch-icon" href="/icon-192.png" />
     <script>
       // تبلت ورودی (/kiosk) مانیفست خودش را دارد؛ بقیه مسیرها پنل مدیریت‌اند.
-      if (location.pathname.indexOf('/kiosk') === 0) {
-        document.getElementById('app-manifest').href = '/manifest.webmanifest'
-      }
+      // لینک فقط همین‌جا و یک‌بار ساخته می‌شود تا مرورگر مانیفست اشتباه را نبیند.
+      (function () {
+        var kiosk = location.pathname.indexOf('/kiosk') === 0
+        var l = document.createElement('link')
+        l.rel = 'manifest'
+        l.href = kiosk ? '/manifest.webmanifest' : '/panel.webmanifest'
+        document.head.appendChild(l)
+      })()
     </script>
   </head>
   <body>
