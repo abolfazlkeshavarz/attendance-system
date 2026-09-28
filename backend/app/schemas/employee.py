@@ -131,7 +131,7 @@ class FaceEnrollRequest(BaseModel):
     """بردار چهره که مرورگر تبلت/پنل استخراج کرده است."""
 
     vector: list[float] = Field(min_length=32, max_length=4096)
-    model_name: str = "face-api-128"
+    model_name: str = "mobilefacenet-arcface-512"
     quality: float | None = None
     image_base64: str | None = None      # اختیاری: تصویر نمونه برای بایگانی
 

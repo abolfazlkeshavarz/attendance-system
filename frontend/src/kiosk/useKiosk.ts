@@ -38,7 +38,7 @@ export interface KioskSettings {
 }
 
 const FALLBACK_SETTINGS: KioskSettings = {
-  face_threshold: 0.6,
+  face_threshold: 0.42, // شباهتِ کسینوسیِ ArcFace — هم‌قدم با FACE_MATCH_THRESHOLD سرور
   min_seconds_between_punches: 60,
   require_liveness: true,
   liveness_turn_threshold: 0.06,

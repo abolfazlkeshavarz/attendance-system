@@ -23,9 +23,9 @@ import {
   captureSnapshot,
   DEFAULT_AMBIGUITY_MARGIN,
   DEFAULT_THRESHOLD,
-  distanceToConfidence,
   faceEngine,
   findBestMatch,
+  similarityToConfidence,
   type MatchResult,
 } from '../lib/faceEngine'
 import { FaceEnrollModal } from '../pages/FaceEnrollModal'
@@ -137,8 +137,12 @@ export default function Kiosk() {
         return
       }
 
+      // مدلِ سنگین‌تر (MobileFaceNet) فقط اینجا اجرا می‌شود — بعد از این‌که
+      // مرحلهٔ سبکِ بالا یک چهرهٔ تکی و به‌اندازهٔ مناسب پیدا کرده، نه روی هر
+      // فریمِ خام.
+      const embedding = await faceEngine.getEmbedding(video, face)
       const match: MatchResult | null = findBestMatch(
-        face.descriptor,
+        embedding,
         candidates,
         threshold,
         ambiguityMargin,
@@ -180,7 +184,7 @@ export default function Kiosk() {
         employeeId: match.candidate.employeeId,
         employeeName: match.candidate.fullName,
         method: 'face',
-        confidence: distanceToConfidence(match.distance, threshold),
+        confidence: similarityToConfidence(match.similarity, threshold),
         snapshot,
         offlineAllowed: kioskSettings.camera_offline_enabled,
       })
@@ -204,6 +208,7 @@ export default function Kiosk() {
     ambiguityMargin,
     candidates,
     faceEnabled,
+    kioskSettings.camera_offline_enabled,
     livenessRequired,
     models.ready,
     resetChallenge,

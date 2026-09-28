@@ -99,14 +99,14 @@ def gallery_version(device: CurrentDevice, db: DbSession) -> dict:
 def identify(payload: KioskIdentifyRequest, device: CurrentDevice, db: DbSession):
     """تطبیق سمت سرور — وقتی اینترنت وصل است می‌تواند جایگزین تطبیق محلی شود."""
     try:
-        employee_id, dist = face_service.identify(db, payload.vector)
+        employee_id, sim = face_service.identify(db, payload.vector)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if employee_id is None:
         return KioskIdentifyResponse(
             matched=False,
-            distance=None if dist == float("inf") else round(dist, 4),
+            similarity=None if sim == -1.0 else round(sim, 4),
             threshold=settings.FACE_MATCH_THRESHOLD,
             message="چهره شناسایی نشد. لطفاً دوباره تلاش کنید یا از کد پرسنلی استفاده کنید.",
         )
@@ -126,7 +126,7 @@ def identify(payload: KioskIdentifyRequest, device: CurrentDevice, db: DbSession
         full_name=emp.full_name,
         personnel_code=emp.personnel_code,
         photo_path=emp.photo_path,
-        distance=round(dist, 4),
+        similarity=round(sim, 4),
         threshold=settings.FACE_MATCH_THRESHOLD,
         suggested_kind=suggested,
         message=f"{emp.full_name} خوش آمدید",

@@ -28,10 +28,10 @@ from app.schemas.employee import FaceGallery, FaceGalleryItem
 def as_vector(vector: list[float] | np.ndarray) -> np.ndarray:
     """اعتبارسنجی بردار چهره — بدون تغییر مقیاس.
 
-    مهم: بردارهای خروجی مدل عمداً نرمال‌سازی نمی‌شوند. آستانه استاندارد و
-    آزموده‌شدهٔ این مدل (۰٫۶) روی همان بردار خام تعریف شده است. اگر اینجا
-    نرمال‌سازی کنیم ولی مرورگر نکند (یا برعکس)، فاصله‌ها بی‌معنا می‌شوند و
-    تشخیص چهره بی‌سروصدا خراب می‌شود.
+    مهم: این‌جا مقیاس را عوض نمی‌کنیم و فرض نمی‌کنیم بردار حتماً L2-نرمال است
+    (هرچند مرورگر همیشه ArcFace را نرمال‌شده می‌فرستد) — چون تطبیق با شباهتِ
+    کسینوسی انجام می‌شود که خودش ناوردا نسبت به مقیاس است؛ فقط باید بردار
+    معتبر (غیرصفر و متناهی) باشد.
     """
     v = np.asarray(vector, dtype=np.float32)
     norm = float(np.linalg.norm(v))
@@ -40,17 +40,30 @@ def as_vector(vector: list[float] | np.ndarray) -> np.ndarray:
     return v
 
 
-def distance(a: np.ndarray, b: np.ndarray) -> float:
-    """فاصله اقلیدسی بین دو بردار چهره (هرچه کمتر، شبیه‌تر)."""
-    return float(np.linalg.norm(a - b))
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """شباهتِ کسینوسیِ دو بردار چهره (هرچه بیشتر، شبیه‌تر؛ بازهٔ [-1, 1])."""
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom < 1e-8:
+        return 0.0
+    return float(np.dot(a, b) / denom)
 
 
 def load_vectors(db: Session) -> tuple[list[int], np.ndarray]:
-    """همه بردارهای فعال را به‌صورت یک ماتریس برمی‌گرداند."""
+    """بردارهای فعالِ همین مدل را به‌صورت یک ماتریس برمی‌گرداند.
+
+    فقط بردارهایی که با مدلِ فعلی ساخته شده‌اند (`dim` برابرِ
+    `FACE_EMBEDDING_DIM`) در نظر گرفته می‌شوند — بردارهای مدلِ قبلی هرگز با
+    این‌ها مقایسه نمی‌شوند، چون فضای بردارِ دو مدل کاملاً متفاوت است. صاحبشان
+    باید دوباره ثبت‌نام شود.
+    """
     rows = db.execute(
         select(FaceEmbedding.employee_id, FaceEmbedding.vector)
         .join(Employee, Employee.id == FaceEmbedding.employee_id)
-        .where(FaceEmbedding.is_active.is_(True), Employee.is_active.is_(True))
+        .where(
+            FaceEmbedding.is_active.is_(True),
+            FaceEmbedding.dim == settings.FACE_EMBEDDING_DIM,
+            Employee.is_active.is_(True),
+        )
     ).all()
     if not rows:
         return [], np.zeros((0, 0), dtype=np.float32)
@@ -60,42 +73,44 @@ def load_vectors(db: Session) -> tuple[list[int], np.ndarray]:
 
 
 def identify(db: Session, vector: list[float]) -> tuple[int | None, float]:
-    """نزدیک‌ترین پرسنل به بردار داده‌شده را پیدا می‌کند.
+    """شبیه‌ترین پرسنل به بردار داده‌شده را پیدا می‌کند.
 
-    خروجی: (شناسه پرسنل یا None، فاصله). اگر فاصله از آستانه بیشتر باشد، یا دو
-    پرسنلِ متفاوت به‌اندازهٔ کافی نزدیک به هم باشند که نتوان مطمئن بود (مثلاً
-    دو خواهر/برادرِ شبیه به هم — یکی فقط ثبت‌نام کرده و دیگری هم تأیید
-    می‌گرفت)، None برمی‌گردد.
+    خروجی: (شناسه پرسنل یا None، شباهتِ کسینوسی). اگر شباهت از آستانه کمتر
+    باشد، یا دو پرسنلِ متفاوت به‌اندازهٔ کافی شبیه به هم باشند که نتوان مطمئن
+    بود (مثلاً دو خواهر/برادرِ شبیه به هم — یکی فقط ثبت‌نام کرده و دیگری هم
+    تأیید می‌گرفت)، None برمی‌گردد.
     """
     ids, mat = load_vectors(db)
     if not ids:
-        return None, float("inf")
+        return None, -1.0
     probe = as_vector(vector)
     if mat.shape[1] != probe.shape[0]:
-        return None, float("inf")
-    dists = np.linalg.norm(mat - probe, axis=1)
+        return None, -1.0
+    norms = np.linalg.norm(mat, axis=1) * np.linalg.norm(probe)
+    norms[norms < 1e-8] = 1e-8
+    sims = (mat @ probe) / norms
 
-    # هر پرسنل چند بردار دارد. قبلاً فاصلهٔ او = نزدیک‌ترینِ یکی از بردارهایش
-    # بود — یعنی کافی بود چهرهٔ روبه‌رو فقط به یک نمونه (حتی کم‌کیفیت) نزدیک
-    # باشد تا تطبیق بخورد، که باعث تأیید نادرستِ افرادِ ثبت‌نام‌نشده می‌شد.
-    # حالا میانگینِ نزدیک‌ترین چند نمونه (حداکثر ۳) ملاک است — سازگار با
+    # هر پرسنل چند بردار دارد. اگر فقط «شبیه‌ترینِ یکیِ» بردارهایش ملاک باشد،
+    # کافی است چهرهٔ روبه‌رو فقط به یک نمونه (حتی کم‌کیفیت) شبیه باشد تا تطبیق
+    # بخورد — همین باعث تأیید نادرستِ افرادِ ثبت‌نام‌نشده می‌شود. به‌جایش
+    # میانگینِ بیشترین شباهت به چند نمونه (حداکثر ۳) ملاک است — سازگار با
     # همین منطق در faceEngine.ts سمت تبلت.
-    per_employee_dists: dict[int, list[float]] = {}
-    for emp_id, d in zip(ids, dists):
-        per_employee_dists.setdefault(emp_id, []).append(float(d))
+    per_employee_sims: dict[int, list[float]] = {}
+    for emp_id, s in zip(ids, sims):
+        per_employee_sims.setdefault(emp_id, []).append(float(s))
     per_employee: dict[int, float] = {}
-    for emp_id, emp_dists in per_employee_dists.items():
-        emp_dists.sort()
-        k = min(3, len(emp_dists))
-        per_employee[emp_id] = sum(emp_dists[:k]) / k
-    ranked = sorted(per_employee.items(), key=lambda kv: kv[1])
+    for emp_id, emp_sims in per_employee_sims.items():
+        emp_sims.sort(reverse=True)
+        k = min(3, len(emp_sims))
+        per_employee[emp_id] = sum(emp_sims[:k]) / k
+    ranked = sorted(per_employee.items(), key=lambda kv: kv[1], reverse=True)
 
-    best_id, best_dist = ranked[0]
-    if best_dist > settings.FACE_MATCH_THRESHOLD:
-        return None, best_dist
-    if len(ranked) > 1 and ranked[1][1] - best_dist < settings.FACE_AMBIGUITY_MARGIN:
-        return None, best_dist
-    return best_id, best_dist
+    best_id, best_sim = ranked[0]
+    if best_sim < settings.FACE_MATCH_THRESHOLD:
+        return None, best_sim
+    if len(ranked) > 1 and best_sim - ranked[1][1] < settings.FACE_AMBIGUITY_MARGIN:
+        return None, best_sim
+    return best_id, best_sim
 
 
 def build_gallery(db: Session) -> FaceGallery:
@@ -113,10 +128,12 @@ def build_gallery(db: Session) -> FaceGallery:
     items: list[FaceGalleryItem] = []
     hasher = hashlib.sha256()
     for emp in employees:
+        # فقط نمونه‌های همین مدل — نمونه‌های مدلِ قبلی (dim متفاوت) نادیده
+        # گرفته می‌شوند تا هرگز با بردارهای جدید مقایسه نشوند.
         vectors = [
             as_vector(json.loads(f.vector)).round(6).tolist()
             for f in emp.faces
-            if f.is_active
+            if f.is_active and f.dim == settings.FACE_EMBEDDING_DIM
         ]
         if not vectors:
             continue
@@ -132,7 +149,7 @@ def build_gallery(db: Session) -> FaceGallery:
             )
         )
     return FaceGallery(
-        model_name="face-api-128",
+        model_name=settings.FACE_MODEL_NAME,
         dim=settings.FACE_EMBEDDING_DIM,
         threshold=settings.FACE_MATCH_THRESHOLD,
         ambiguity_margin=settings.FACE_AMBIGUITY_MARGIN,

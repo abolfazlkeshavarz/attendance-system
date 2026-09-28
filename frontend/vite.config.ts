@@ -55,13 +55,19 @@ export default defineConfig({
       manifest: false,
       workbox: {
         maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,bin}'],
+        // wasm: موتورِ ONNX Runtime Web (MobileFaceNet). onnx: خودِ مدل.
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,json,bin,wasm,onnx}'],
         navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
           {
             urlPattern: /\/models\/.*/,
             handler: 'CacheFirst',
             options: { cacheName: 'face-models', expiration: { maxEntries: 60 } },
+          },
+          {
+            urlPattern: /\/ort\/.*/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'onnx-runtime', expiration: { maxEntries: 10 } },
           },
         ],
       },

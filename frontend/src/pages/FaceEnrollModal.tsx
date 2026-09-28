@@ -4,7 +4,7 @@ import { Camera, CheckCircle2, RefreshCw, ScanFace, Trash2, TriangleAlert } from
 import clsx from 'clsx'
 import { api, errorMessage } from '../lib/api'
 import type { Employee, FaceSample } from '../lib/types'
-import { cropFace, faceEngine } from '../lib/faceEngine'
+import { cropFace, FACE_MODEL_NAME, faceEngine } from '../lib/faceEngine'
 import { toPersianDigits } from '../lib/jalali'
 import { ConfirmDialog, Modal, Spinner, useToast } from '../components/ui'
 
@@ -108,8 +108,12 @@ export function FaceEnrollModal({
   }, [open])
 
   const enroll = useMutation({
-    mutationFn: async (payload: { vector: number[]; image_base64: string | null; quality: number }) =>
-      (await api.post(`/employees/${employee!.id}/faces`, payload)).data,
+    mutationFn: async (payload: {
+      vector: number[]
+      model_name: string
+      image_base64: string | null
+      quality: number
+    }) => (await api.post(`/employees/${employee!.id}/faces`, payload)).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['faces', employee?.id] })
       void qc.invalidateQueries({ queryKey: ['employees'] })
@@ -147,10 +151,17 @@ export function FaceEnrollModal({
     onError: (err) => toast.error(errorMessage(err)),
   })
 
+  // نمونه‌هایی که با مدلِ قبلی (face-api، ۱۲۸بُعدی) ثبت شده‌اند دیگر قابلِ
+  // مقایسه با بردارهای جدیدِ ۵۱۲بُعدیِ MobileFaceNet نیستند — فضای بردارِ دو
+  // مدل کاملاً متفاوت است. این‌ها را جدا نشان می‌دهیم تا مدیر بفهمد چرا فردی
+  // که قبلاً «ثبت‌نام‌شده» بود، حالا نیاز به ثبت‌نامِ مجدد دارد.
+  const staleSamples = samples?.filter((s) => s.model_name !== FACE_MODEL_NAME) ?? []
+  const currentSamples = samples?.filter((s) => s.model_name === FACE_MODEL_NAME) ?? []
+
   // تعداد نمونه‌های فعلی و وضعیت «کاملِ» ثبت‌نام، به‌صورت ref هم — تا حلقهٔ
   // زیر (که خودش داخل useEffect است) بدون بازساخته‌شدن هر تغییرِ count همیشه
   // آخرین مقدار را ببیند.
-  const count = samples?.length ?? 0
+  const count = currentSamples.length
   const enough = count >= TARGET_SAMPLES
   const countRef = useRef(count)
   useEffect(() => {
@@ -212,8 +223,12 @@ export function FaceEnrollModal({
       capturingRef.current = true
       setCapturing(true)
       try {
+        // MobileFaceNet فقط اینجا اجرا می‌شود — بعد از قبول‌شدنِ کیفیت/اندازه،
+        // نه روی هر فریمِ بررسی‌شده.
+        const embedding = await faceEngine.getEmbedding(video, face)
         await enroll.mutateAsync({
-          vector: Array.from(face.descriptor),
+          vector: Array.from(embedding),
+          model_name: FACE_MODEL_NAME,
           image_base64: cropFace(video, face.box),
           quality: Math.round(face.score * 100) / 100,
         })
@@ -335,7 +350,7 @@ export function FaceEnrollModal({
                 {enough ? <CheckCircle2 size={13} /> : <TriangleAlert size={13} />}
                 {toPersianDigits(count)} از {toPersianDigits(TARGET_SAMPLES)}
               </span>
-              {count > 0 && (
+              {samples && samples.length > 0 && (
                 <button
                   onClick={() => setConfirmClearAll(true)}
                   className="rounded-lg p-1.5 text-ink-400 transition hover:bg-rose-50 hover:text-rose-600"
@@ -347,6 +362,14 @@ export function FaceEnrollModal({
             </div>
           </div>
 
+          {staleSamples.length > 0 && (
+            <p className="mb-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs leading-6 text-rose-800">
+              {toPersianDigits(staleSamples.length)} نمونه با مدلِ قبلیِ تشخیصِ چهره ثبت شده و دیگر
+              برای تشخیص استفاده نمی‌شود. برای این فرد «حذف همه» را بزنید و دوباره جلوی دوربین
+              بایستید.
+            </p>
+          )}
+
           {!enough && (
             <p className="mb-3 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-6 text-amber-800">
               فقط جلوی دوربین بایستید — {toPersianDigits(TARGET_SAMPLES)} نمونه به‌طور خودکار
@@ -356,7 +379,7 @@ export function FaceEnrollModal({
 
           {isLoading ? (
             <div className="py-8 text-center text-sm text-ink-400">در حال بارگذاری…</div>
-          ) : count === 0 ? (
+          ) : !samples || samples.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-ink-200 py-10 text-center text-sm text-ink-400">
               هنوز نمونه‌ای ثبت نشده است
             </div>
@@ -379,7 +402,12 @@ export function FaceEnrollModal({
                     </div>
                   )}
                   <div className="flex-1 text-sm">
-                    <p className="font-medium text-ink-800">نمونه {toPersianDigits(index + 1)}</p>
+                    <p className="flex items-center gap-1.5 font-medium text-ink-800">
+                      نمونه {toPersianDigits(index + 1)}
+                      {s.model_name !== FACE_MODEL_NAME && (
+                        <span className="badge bg-rose-50 text-[10px] text-rose-700">قدیمی</span>
+                      )}
+                    </p>
                     <p className="text-xs text-ink-400">
                       کیفیت: {s.quality ? toPersianDigits(Math.round(s.quality * 100)) + '٪' : '—'}
                     </p>
@@ -400,7 +428,7 @@ export function FaceEnrollModal({
 
       <ConfirmDialog
         open={confirmClearAll}
-        message={`همهٔ ${toPersianDigits(count)} نمونهٔ چهرهٔ ${employee.full_name} حذف شود؟ بعد از این می‌توانید جلوی دوربین بایستید تا از نو ثبت شود.`}
+        message={`همهٔ ${toPersianDigits(samples?.length ?? 0)} نمونهٔ چهرهٔ ${employee.full_name} حذف شود؟ بعد از این می‌توانید جلوی دوربین بایستید تا از نو ثبت شود.`}
         busy={clearAll.isPending}
         onConfirm={() => clearAll.mutate()}
         onCancel={() => setConfirmClearAll(false)}

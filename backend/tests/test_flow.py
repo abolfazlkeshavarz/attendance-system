@@ -1,6 +1,7 @@
 """آزمون سرتاسری: از ورود مدیر تا ثبت تردد آفلاین و خروجی اکسل."""
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import uuid
@@ -111,8 +112,18 @@ def test_duplicate_personnel_code_rejected(client, admin_headers, employee):
     assert res.status_code == 409
 
 
+def _wave(freq: float, phase: float, n: int = 512) -> list[float]:
+    """بردارِ آزمایشیِ ۵۱۲بُعدی برای آزمونِ شباهتِ کسینوسی.
+
+    دو موجِ با فرکانسِ متفاوت در ابعادِ بالا تقریباً بر هم عمودند (شباهتِ
+    کسینوسیِ نزدیکِ صفر) — دقیقاً مثلِ دو بردارِ ArcFaceِ متعلق به دو فردِ
+    متفاوت. همان فرکانس + کمی نویز یعنی همان فرد در دو لحظهٔ متفاوت.
+    """
+    return [math.sin(i * freq + phase) for i in range(n)]
+
+
 def test_face_enrollment_and_gallery(client, admin_headers, employee):
-    vector = [0.10 + i * 0.001 for i in range(512)]
+    vector = _wave(0.7, 0.3)
     res = client.post(
         f"{API}/employees/{employee['id']}/faces",
         headers=admin_headers,
@@ -125,9 +136,9 @@ def test_face_enrollment_and_gallery(client, admin_headers, employee):
     assert gallery["threshold"] > 0
     assert any(item["employee_id"] == employee["id"] for item in gallery["items"])
     item = next(i for i in gallery["items"] if i["employee_id"] == employee["id"])
-    # بردار باید دست‌نخورده (خام) ذخیره شود — نه نرمال‌شده.
-    # مرورگر هم بردار خام تولید می‌کند؛ اگر سرور مقیاس را عوض کند، فاصله‌ها
-    # بی‌معنا می‌شوند و تشخیص چهره روی تبلت خراب می‌شود.
+    # بردار باید دست‌نخورده ذخیره شود — نه نرمال‌شده یا مقیاس‌داده‌شده.
+    # مرورگر خودش بردار را L2-نرمال می‌کند؛ اگر سرور دوباره مقیاسش را عوض
+    # کند، شباهتِ کسینوسی بی‌معنا می‌شود و تشخیص چهره روی تبلت خراب می‌شود.
     stored = item["vectors"][0]
     assert len(stored) == 512
     for original, roundtripped in zip(vector, stored):
@@ -153,8 +164,10 @@ def test_device_key_required(client, device):
 
 def test_server_side_face_identify(client, device, employee):
     headers = {"X-Device-Key": device["api_key"]}
-    # همان بردار با کمی نویز — باید همچنان تطبیق داده شود
-    probe = [0.10 + i * 0.001 + 0.0005 for i in range(512)]
+    # همان بردار با کمی نویز (شباهتِ کسینوسی ~۰٫۹۹۸) — باید همچنان تطبیق شود
+    base = _wave(0.7, 0.3)
+    noise = _wave(5.3, 2.7)
+    probe = [v + 0.05 * n for v, n in zip(base, noise)]
     res = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": probe})
     assert res.status_code == 200, res.text
     body = res.json()
@@ -162,8 +175,9 @@ def test_server_side_face_identify(client, device, employee):
     assert body["employee_id"] == employee["id"]
     assert body["suggested_kind"] == "in"
 
-    # بردار کاملاً متفاوت — نباید تطبیق داده شود
-    other = [(-1.0) ** i * 0.5 for i in range(512)]
+    # بردار کاملاً متفاوت (فرکانسِ دیگر → تقریباً عمود، شباهتِ نزدیکِ صفر) —
+    # نباید تطبیق داده شود
+    other = _wave(1.9, 1.1)
     res2 = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": other})
     assert res2.json()["matched"] is False
 
@@ -186,20 +200,26 @@ def test_face_identify_rejects_ambiguous_lookalikes(client, admin_headers, devic
         assert r.status_code == 201, r.text
         return emp
 
-    base = [0.30 + i * 0.001 for i in range(512)]
-    # فاصلهٔ اقلیدسی این دو از هم ~۰.۳ — «شبیه به هم» ولی نه یکسان
-    sibling = [v + 0.01326 for v in base]
+    # فرکانس‌های متفاوت از test_server_side_face_identify تا بردارش با
+    # بردارِ همان employeeِ مشترک (که در دیتابیس می‌ماند) تصادفاً یکی نشود.
+    base = _wave(0.9, 0.4)
+    other_dir = _wave(2.3, 1.7)
+    noise = _wave(6.1, 3.4)
+    # ترکیبِ ۷۰٪ base + ۳۰٪ یک جهتِ دیگر — شباهتِ کسینوسی با base ~۰٫۹۲:
+    # «شبیه به هم» ولی نه یکسان
+    sibling = [0.7 * a + 0.3 * o for a, o in zip(base, other_dir)]
     emp_a = register("3201", "برادر یک", base)
     emp_b = register("3202", "برادر دو", sibling)
 
-    # درست وسط این دو نفر — با هر دو تقریباً هم‌فاصله، پس مبهم است
+    # درست وسط این دو نفر — با هر دو تقریباً هم‌شباهت، پس مبهم است
     midpoint = [(b + s) / 2 for b, s in zip(base, sibling)]
     ambiguous = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": midpoint})
     assert ambiguous.status_code == 200
     assert ambiguous.json()["matched"] is False
 
-    # ولی یک بردارِ واقعاً نزدیک به برادرِ اول باید قطعی و درست تشخیص داده شود
-    close_to_a = [v + 0.00001 for v in base]
+    # ولی یک بردارِ واقعاً نزدیک به برادرِ اول (شباهتِ کسینوسی ~۰٫۹۹۹) باید
+    # قطعی و درست تشخیص داده شود
+    close_to_a = [a + 0.05 * n for a, n in zip(base, noise)]
     clear = client.post(f"{API}/kiosk/identify", headers=headers, json={"vector": close_to_a})
     assert clear.status_code == 200
     body = clear.json()

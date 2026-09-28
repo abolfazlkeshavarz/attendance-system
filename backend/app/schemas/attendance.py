@@ -133,7 +133,7 @@ class KioskIdentifyResponse(BaseModel):
     full_name: str | None = None
     personnel_code: str | None = None
     photo_path: str | None = None
-    distance: float | None = None
+    similarity: float | None = None
     threshold: float
     suggested_kind: str | None = None
     message: str

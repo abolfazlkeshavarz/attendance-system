@@ -45,7 +45,11 @@ def to_out(emp: Employee) -> EmployeeOut:
         is_active=emp.is_active,
         department_name=emp.department.name if emp.department else None,
         shift_name=emp.shift.name if emp.shift else None,
-        face_count=sum(1 for f in emp.faces if f.is_active),
+        # فقط نمونه‌های مدلِ فعلی شمرده می‌شوند — کسی که فقط نمونهٔ مدلِ قبلی
+        # دارد باید «ثبت‌نام‌نشده» دیده شود تا دوباره ثبت‌نام کند.
+        face_count=sum(
+            1 for f in emp.faces if f.is_active and f.dim == settings.FACE_EMBEDDING_DIM
+        ),
         has_pin=bool(emp.pin_hash),
         has_fingerprint=emp.fingerprint_template is not None,
     )
