@@ -64,6 +64,8 @@ def handshake(device: CurrentDevice, db: DbSession) -> dict:
             "face_enabled": auth_methods.face_enabled,
             "fingerprint_enabled": auth_methods.fingerprint_enabled,
             "pin_enabled": auth_methods.pin_enabled,
+            "camera_offline_enabled": auth_methods.camera_offline_enabled,
+            "fingerprint_offline_enabled": auth_methods.fingerprint_offline_enabled,
         },
     }
 
@@ -134,8 +136,14 @@ def identify(payload: KioskIdentifyRequest, device: CurrentDevice, db: DbSession
 @router.post("/punch", response_model=PunchResult, summary="ثبت یک تردد از تبلت")
 def punch(payload: PunchIn, device: CurrentDevice, db: DbSession) -> PunchResult:
     method = payload.method or PunchMethod.FACE.value
-    if method == PunchMethod.FACE.value and not settings_service.get_auth_methods(db).face_enabled:
+    auth_methods = settings_service.get_auth_methods(db)
+    if method == PunchMethod.FACE.value and not auth_methods.face_enabled:
         raise HTTPException(status_code=403, detail="تشخیص چهره غیرفعال است")
+    # پشتیبان سمت سرور: حتی اگر ساخت قدیمی تبلت هنوز صف آفلاین محلی دارد،
+    # وقتی مدیر حالت آفلاین را خاموش کرده، این رکوردها اصلاً ثبت نمی‌شوند —
+    # نه این‌که بعداً همگام شوند.
+    if payload.created_offline and not auth_methods.camera_offline_enabled:
+        raise HTTPException(status_code=403, detail="حالت آفلاین دوربین غیرفعال است؛ تردد ثبت نشد")
 
     emp = attendance_service.find_employee(
         db, employee_id=payload.employee_id, personnel_code=payload.personnel_code
@@ -219,6 +227,24 @@ def sync(payload: PunchBatch, device: CurrentDevice, db: DbSession) -> PunchBatc
     """
     results: list[PunchResult] = []
     created = duplicates = rejected = 0
+
+    if not settings_service.get_auth_methods(db).camera_offline_enabled:
+        # مدیر بعد از این‌که این بسته روی تبلت انباشته شد حالت آفلاین را خاموش
+        # کرده — کل بسته رد می‌شود، نه ثبت دیرهنگام. وضعیتِ «dropped» (نه
+        # «rejected») به تبلت می‌گوید این رکوردها هرگز ثبت نخواهند شد، پس آن‌ها
+        # را از صف محلی هم پاک کند؛ وگرنه تا ابد برای تلاش دوباره می‌مانند.
+        for item in payload.records:
+            rejected += 1
+            results.append(
+                PunchResult(
+                    client_uuid=item.client_uuid,
+                    status="dropped",
+                    message="حالت آفلاین دوربین غیرفعال است؛ تردد ثبت نشد",
+                )
+            )
+        return PunchBatchResult(
+            created=0, duplicates=0, rejected=rejected, results=results, server_time=now_utc()
+        )
 
     for item in payload.records:
         emp = attendance_service.find_employee(

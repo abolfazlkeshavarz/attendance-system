@@ -26,6 +26,8 @@ def update_auth_methods(
     face_enabled: bool | None = None,
     fingerprint_enabled: bool | None = None,
     pin_enabled: bool | None = None,
+    camera_offline_enabled: bool | None = None,
+    fingerprint_offline_enabled: bool | None = None,
 ) -> SystemSettings:
     row = get_auth_methods(db)
     face = row.face_enabled if face_enabled is None else face_enabled
@@ -37,6 +39,10 @@ def update_auth_methods(
     row.face_enabled = face
     row.fingerprint_enabled = fingerprint
     row.pin_enabled = pin
+    if camera_offline_enabled is not None:
+        row.camera_offline_enabled = camera_offline_enabled
+    if fingerprint_offline_enabled is not None:
+        row.fingerprint_offline_enabled = fingerprint_offline_enabled
     db.commit()
     db.refresh(row)
     return row

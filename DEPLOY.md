@@ -175,6 +175,15 @@ their next handshake, ESP32 gates within ~2 minutes) and hide/disable
 whatever's turned off; the backend also rejects a disabled method outright
 if something tries to use it anyway.
 
+The same screen has an **offline mode** toggle for the camera tablet and
+for the fingerprint gates, separately. On by default: if a device loses
+its connection, it queues the punch locally and sends it once the
+connection is back. Turn it off for a device type and it stops queuing —
+a punch made while that device can't reach the server is not recorded at
+all, instead of being recorded late. The backend also rejects any
+already-queued punch it receives once the toggle is off, so a device that
+was offline before you flipped it can't slip old punches through.
+
 ## 9. Backups
 
 ```bash

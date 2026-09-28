@@ -22,6 +22,10 @@ struct DeviceConfig {
   // still run (degraded) if it reboots while the backend is also down.
   int cachedMinSeconds = 60;
   bool cachedFingerprintEnabled = true;
+  // اگر خاموش باشد، وقتی نمی‌توان به سرور رسید، ضربه‌ی اثرانگشت اصلاً در صفِ
+  // LittleFS ذخیره نمی‌شود — یعنی هرگز ثبت نخواهد شد، نه این‌که بعداً
+  // همگام‌سازی شود.
+  bool cachedOfflineEnabled = true;
 };
 
 namespace config {

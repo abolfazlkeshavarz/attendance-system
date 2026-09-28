@@ -43,18 +43,31 @@ def _add_missing_columns() -> None:
         for col in table.columns:
             if col.name in existing_cols:
                 continue
+            default_sql = ""
             if not col.nullable:
-                logger.warning(
-                    "%s.%s is a new NOT NULL column — not auto-adding it; "
-                    "needs a real migration with a default value",
-                    table.name,
-                    col.name,
-                )
-                continue
+                # یک NOT NULL جدید فقط وقتی خودکار اضافه می‌شود که یک مقدارِ
+                # پیش‌فرضِ ثابتِ بولی داشته باشد — کافی است سطرهای موجود را
+                # هم پر کند (مثلاً دو پرچمِ حالت آفلاین در system_settings).
+                # هر نوعِ دیگری همچنان نیاز به مهاجرتِ دستی دارد.
+                default = getattr(col, "default", None)
+                if default is not None and getattr(default, "is_scalar", False) and isinstance(
+                    default.arg, bool
+                ):
+                    default_sql = f" NOT NULL DEFAULT {'TRUE' if default.arg else 'FALSE'}"
+                else:
+                    logger.warning(
+                        "%s.%s is a new NOT NULL column — not auto-adding it; "
+                        "needs a real migration with a default value",
+                        table.name,
+                        col.name,
+                    )
+                    continue
             try:
                 col_type = col.type.compile(dialect=engine.dialect)
                 with engine.begin() as conn:
-                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}'))
+                    conn.execute(
+                        text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col_type}{default_sql}')
+                    )
                 logger.info("schema: added missing column %s.%s (%s)", table.name, col.name, col_type)
             except Exception:
                 logger.exception("schema: could not auto-add %s.%s — add it manually", table.name, col.name)

@@ -906,6 +906,60 @@ function AuthMethodsTab() {
           فقط یک روش فعال است؛ برای غیرفعال کردنش، ابتدا روش دیگری را فعال کنید.
         </p>
       )}
+
+      <div className="mt-8 border-t border-ink-100 pt-6">
+        <SectionTitle
+          title="حالت آفلاین"
+          subtitle="اگر خاموش باشد، در قطعی اینترنت دستگاه دیگر تردد را در صف محلی ذخیره نمی‌کند — یعنی تردد بی‌اینترنت اصلاً ثبت نمی‌شود، نه این‌که بعداً همگام شود"
+        />
+        <div className="grid gap-3">
+          {(
+            [
+              {
+                key: 'camera_offline_enabled',
+                label: 'تبلت / دوربین',
+                hint: 'ذخیرهٔ محلی تردد چهره هنگام قطعی اینترنت',
+              },
+              {
+                key: 'fingerprint_offline_enabled',
+                label: 'ماژول اثر انگشت',
+                hint: 'ذخیرهٔ محلی تردد اثر انگشت روی خود ماژول ESP32 هنگام قطعی اینترنت',
+              },
+            ] as const
+          ).map(({ key, label, hint }) => {
+            const checked = methods[key]
+            return (
+              <label
+                key={key}
+                className={clsx(
+                  'flex cursor-pointer items-center gap-3.5 rounded-xl border p-4 transition hover:bg-ink-50',
+                  checked ? 'border-brand-300 bg-brand-50' : 'border-ink-200',
+                )}
+              >
+                <div
+                  className={clsx(
+                    'grid size-10 shrink-0 place-items-center rounded-xl',
+                    checked ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-400',
+                  )}
+                >
+                  <CloudOff size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-ink-800">{label}</p>
+                  <p className="text-xs text-ink-400">{hint}</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="size-5 accent-brand-600"
+                  checked={checked}
+                  disabled={update.isPending}
+                  onChange={(e) => update.mutate({ [key]: e.target.checked })}
+                />
+              </label>
+            )
+          })}
+        </div>
+      </div>
     </Card>
   )
 }

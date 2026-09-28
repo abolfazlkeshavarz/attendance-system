@@ -75,12 +75,19 @@ def identify(db: Session, vector: list[float]) -> tuple[int | None, float]:
         return None, float("inf")
     dists = np.linalg.norm(mat - probe, axis=1)
 
-    # هر پرسنل چند بردار دارد؛ فاصلهٔ او = نزدیک‌ترینِ بردارهایش.
-    per_employee: dict[int, float] = {}
+    # هر پرسنل چند بردار دارد. قبلاً فاصلهٔ او = نزدیک‌ترینِ یکی از بردارهایش
+    # بود — یعنی کافی بود چهرهٔ روبه‌رو فقط به یک نمونه (حتی کم‌کیفیت) نزدیک
+    # باشد تا تطبیق بخورد، که باعث تأیید نادرستِ افرادِ ثبت‌نام‌نشده می‌شد.
+    # حالا میانگینِ نزدیک‌ترین چند نمونه (حداکثر ۳) ملاک است — سازگار با
+    # همین منطق در faceEngine.ts سمت تبلت.
+    per_employee_dists: dict[int, list[float]] = {}
     for emp_id, d in zip(ids, dists):
-        d = float(d)
-        if emp_id not in per_employee or d < per_employee[emp_id]:
-            per_employee[emp_id] = d
+        per_employee_dists.setdefault(emp_id, []).append(float(d))
+    per_employee: dict[int, float] = {}
+    for emp_id, emp_dists in per_employee_dists.items():
+        emp_dists.sort()
+        k = min(3, len(emp_dists))
+        per_employee[emp_id] = sum(emp_dists[:k]) / k
     ranked = sorted(per_employee.items(), key=lambda kv: kv[1])
 
     best_id, best_dist = ranked[0]

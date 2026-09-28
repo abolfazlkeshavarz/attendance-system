@@ -182,6 +182,7 @@ export default function Kiosk() {
         method: 'face',
         confidence: distanceToConfidence(match.distance, threshold),
         snapshot,
+        offlineAllowed: kioskSettings.camera_offline_enabled,
       })
 
       setGreeting({

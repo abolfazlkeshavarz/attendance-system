@@ -69,7 +69,18 @@ class FaceEngine {
   /** موتور فعال TensorFlow: webgl (سریع) یا cpu (کند ولی همه‌جا کار می‌کند) */
   backend = ''
   private loadPromise: Promise<void> | null = null
-  private options = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 })
+  /**
+   * تشخیصِ چهره — نه تطبیق — با SSD MobileNet v1 به‌جای TinyFaceDetector.
+   *
+   * TinyFaceDetector سریع‌تر است ولی کادرِ چهره را کم‌دقیق‌تر پیدا می‌کند؛
+   * چون بردار ۱۲۸بُعدی از همین کادر ساخته می‌شود، یک کادرِ کج/نادقیق باعث
+   * می‌شود بردارِ خروجی هم کمی نادرست باشد و فاصلهٔ افراد مختلف در عمل به هم
+   * نزدیک‌تر از واقعیت دیده شود — دقیقاً همان چیزی که باعث تأیید افراد
+   * ثبت‌نام‌نشده می‌شود. SSD MobileNet v1 کندتر است (چند ده میلی‌ثانیهٔ بیشتر
+   * روی WebGL) ولی برای تبلتِ ثابتِ کنار درب، دقت مهم‌تر از چند فریم در ثانیه
+   * است.
+   */
+  private options = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6, maxResults: 5 })
 
   get ready() {
     return this.status === 'ready'
@@ -86,7 +97,7 @@ class FaceEngine {
     try {
       await this.selectBackend()
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
       ])
@@ -215,6 +226,29 @@ export function euclidean(a: Float32Array | number[], b: Float32Array | number[]
  *      خواهر/برادرِ شبیه به هم که فقط یکی‌شان ثبت‌نام کرده. حدس زدن اینجا از
  *      رد کردن و هدایت به کد پرسنلی/PIN بدتر است.
  */
+/**
+ * فاصلهٔ یک نامزد از چهرهٔ روبه‌رو دوربین را حساب می‌کند.
+ *
+ * قبلاً «نزدیک‌ترینِ یکیِ» نمونه‌های ثبت‌شده ملاک بود — یعنی کافی بود چهرهٔ
+ * جلوی دوربین فقط به یکی از چند نمونهٔ یک نفر (حتی یک نمونهٔ کم‌کیفیت) نزدیک
+ * باشد تا تطبیق بخورد. همین باعث می‌شد گاهی افرادِ ثبت‌نام‌نشده هم تأیید
+ * شوند. حالا میانگینِ نزدیک‌ترین چند نمونه (حداکثر ۳) ملاک است: یک فردِ واقعی
+ * باید هم‌زمان به چند نمونهٔ همان شخص نزدیک باشد، نه فقط یکی.
+ */
+function candidateDistance(descriptor: Float32Array, candidate: MatchCandidate): number {
+  const dists: number[] = []
+  for (const vector of candidate.vectors) {
+    if (vector.length !== descriptor.length) continue
+    dists.push(euclidean(descriptor, vector))
+  }
+  if (dists.length === 0) return Infinity
+  dists.sort((a, b) => a - b)
+  const k = Math.min(3, dists.length)
+  let sum = 0
+  for (let i = 0; i < k; i++) sum += dists[i]
+  return sum / k
+}
+
 export function findBestMatch(
   descriptor: Float32Array,
   candidates: MatchCandidate[],
@@ -226,11 +260,7 @@ export function findBestMatch(
   let runnerUpDistance = Infinity
 
   for (const candidate of candidates) {
-    let candidateBest = Infinity
-    for (const vector of candidate.vectors) {
-      if (vector.length !== descriptor.length) continue
-      candidateBest = Math.min(candidateBest, euclidean(descriptor, vector))
-    }
+    const candidateBest = candidateDistance(descriptor, candidate)
     if (candidateBest === Infinity) continue
 
     if (!best || candidateBest < best.distance) {

@@ -9,9 +9,13 @@ class AuthMethodsOut(ORMModel):
     face_enabled: bool
     fingerprint_enabled: bool
     pin_enabled: bool
+    camera_offline_enabled: bool
+    fingerprint_offline_enabled: bool
 
 
 class AuthMethodsUpdate(BaseModel):
     face_enabled: bool | None = None
     fingerprint_enabled: bool | None = None
     pin_enabled: bool | None = None
+    camera_offline_enabled: bool | None = None
+    fingerprint_offline_enabled: bool | None = None

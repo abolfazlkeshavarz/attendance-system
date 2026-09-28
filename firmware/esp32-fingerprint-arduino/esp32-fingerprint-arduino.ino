@@ -70,6 +70,7 @@ bool g_bootCounterCleared = false;
 
 int g_minSecondsBetweenPunches = 60;
 bool g_fingerprintEnabled = true;
+bool g_offlineEnabled = true;
 uint16_t g_lastSlot = 0xFFFF;
 unsigned long g_lastSlotMs = 0;
 unsigned long g_resetPressStart = 0;
@@ -242,10 +243,19 @@ void applyHandshakeSettings(const JsonDocument &doc) {
   }
   g_fingerprintEnabled = enabled;
 
+  bool offlineEnabled = doc["settings"]["fingerprint_offline_enabled"] | true;
+  if (offlineEnabled != g_offlineEnabled) {
+    Serial.printf("[settings] offline queueing now %s\n", offlineEnabled ? "ENABLED" : "DISABLED");
+    oled::log(offlineEnabled ? "offline mode ENABLED" : "offline mode DISABLED");
+  }
+  g_offlineEnabled = offlineEnabled;
+
   if (g_cfg.cachedMinSeconds != g_minSecondsBetweenPunches ||
-      g_cfg.cachedFingerprintEnabled != enabled) {
+      g_cfg.cachedFingerprintEnabled != enabled ||
+      g_cfg.cachedOfflineEnabled != offlineEnabled) {
     g_cfg.cachedMinSeconds = g_minSecondsBetweenPunches;
     g_cfg.cachedFingerprintEnabled = enabled;
+    g_cfg.cachedOfflineEnabled = offlineEnabled;
     config::saveCachedSettings(g_cfg);
   }
 }
@@ -453,6 +463,15 @@ void handleMatch(uint16_t slot, uint16_t confidence) {
       return;
     }
   }
+  if (!g_offlineEnabled) {
+    // مدیر حالت آفلاین را خاموش کرده — این ضربه اصلاً ذخیره نمی‌شود.
+    char buf[40];
+    snprintf(buf, sizeof(buf), "slot %u: no link, offline off", slot);
+    oled::log(buf);
+    led::scanError();
+    return;
+  }
+
   entry["created_offline"] = true;
   g_queue.push(entry);
   char buf[32];
@@ -517,6 +536,7 @@ void setup() {
     // sensible values before the first handshake lands.
     g_minSecondsBetweenPunches = g_cfg.cachedMinSeconds;
     g_fingerprintEnabled = g_cfg.cachedFingerprintEnabled;
+    g_offlineEnabled = g_cfg.cachedOfflineEnabled;
   }
 
   ensureWifi();

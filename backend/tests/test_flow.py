@@ -872,3 +872,123 @@ def test_kiosk_heartbeat_reports_queue_depth(client, device, admin_headers):
     row = next(d for d in devices if d["device_uid"] == device["device_uid"])
     assert row["pending_count"] == 7
     assert row["app_version"] == "1.0.0"
+
+
+def test_camera_offline_mode_toggle(client, admin_headers, device, employee):
+    """وقتی مدیر حالت آفلاین دوربین را خاموش می‌کند، تردد آفلاین اصلاً ثبت نمی‌شود."""
+    headers = {"X-Device-Key": device["api_key"]}
+    try:
+        hs = client.get(f"{API}/kiosk/handshake", headers=headers).json()
+        assert hs["settings"]["camera_offline_enabled"] is True  # پیش‌فرض روشن
+
+        off = client.patch(
+            f"{API}/settings/auth-methods",
+            headers=admin_headers,
+            json={"camera_offline_enabled": False},
+        )
+        assert off.status_code == 200
+        assert off.json()["camera_offline_enabled"] is False
+
+        # ثبتِ تکی با created_offline=True باید رد شود
+        single = client.post(
+            f"{API}/kiosk/punch",
+            headers=headers,
+            json={
+                "employee_id": employee["id"],
+                "kind": "in",
+                "method": "face",
+                "client_uuid": uuid.uuid4().hex,
+                "created_offline": True,
+            },
+        )
+        assert single.status_code == 403
+
+        # بستهٔ همگام‌سازی هم باید همه را dropped برگرداند، نه ثبت
+        batch = client.post(
+            f"{API}/kiosk/sync",
+            headers=headers,
+            json={
+                "records": [
+                    {
+                        "employee_id": employee["id"],
+                        "kind": "in",
+                        "method": "face",
+                        "client_uuid": uuid.uuid4().hex,
+                        "created_offline": True,
+                    }
+                ]
+            },
+        ).json()
+        assert batch["created"] == 0
+        assert batch["results"][0]["status"] == "dropped"
+
+        # ثبتِ آنلاین (created_offline=False) همچنان مجاز است
+        online = client.post(
+            f"{API}/kiosk/punch",
+            headers=headers,
+            json={
+                "employee_id": employee["id"],
+                "kind": "in",
+                "method": "face",
+                "client_uuid": uuid.uuid4().hex,
+                "created_offline": False,
+            },
+        )
+        assert online.status_code == 200, online.text
+    finally:
+        client.patch(
+            f"{API}/settings/auth-methods",
+            headers=admin_headers,
+            json={"camera_offline_enabled": True},
+        )
+
+
+def test_fingerprint_offline_mode_toggle(client, admin_headers):
+    fp_emp = client.post(
+        f"{API}/employees",
+        headers=admin_headers,
+        json={"personnel_code": "1800", "first_name": "سینا", "last_name": "رستمی"},
+    ).json()
+    fp_device = client.post(
+        f"{API}/devices",
+        headers=admin_headers,
+        json={"name": "درب دوم", "location": "سالن", "kind": "fingerprint"},
+    ).json()
+    fp_headers = {"X-Device-Key": fp_device["api_key"]}
+    client.patch(
+        f"{API}/settings/auth-methods", headers=admin_headers, json={"fingerprint_enabled": True}
+    )
+
+    hs = client.get(f"{API}/kiosk/handshake", headers=fp_headers).json()
+    assert hs["settings"]["fingerprint_offline_enabled"] is True
+
+    client.patch(
+        f"{API}/settings/auth-methods",
+        headers=admin_headers,
+        json={"fingerprint_offline_enabled": False},
+    )
+
+    job = client.post(
+        f"{API}/fingerprint/enroll",
+        headers=admin_headers,
+        json={"employee_id": fp_emp["id"], "device_id": fp_device["id"]},
+    ).json()
+    client.post(
+        f"{API}/kiosk/fingerprint/enroll/complete",
+        headers=fp_headers,
+        json={"job_id": job["id"], "slot_id": 9, "template_base64": "", "model_name": "fpm22"},
+    )
+
+    rejected = client.post(
+        f"{API}/kiosk/fingerprint/punch",
+        headers=fp_headers,
+        json={"slot_id": 9, "confidence": 150, "created_offline": True},
+    )
+    assert rejected.status_code == 403
+
+    ok = client.post(
+        f"{API}/kiosk/fingerprint/punch",
+        headers=fp_headers,
+        json={"slot_id": 9, "confidence": 150, "created_offline": False},
+    )
+    assert ok.status_code == 200, ok.text

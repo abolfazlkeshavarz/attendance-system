@@ -170,11 +170,20 @@ def sync_confirm(payload: FingerprintSyncConfirm, device: CurrentDevice, db: DbS
 
 @device_router.post("/punch", response_model=PunchResult, summary="ثبت تردد با اثر انگشت")
 def punch(payload: FingerprintPunchRequest, device: CurrentDevice, db: DbSession) -> PunchResult:
-    if not settings_service.get_auth_methods(db).fingerprint_enabled:
+    auth_methods = settings_service.get_auth_methods(db)
+    if not auth_methods.fingerprint_enabled:
         kiosk_status_service.record(
             db, device, phase="error", message="ثبت تردد با اثر انگشت غیرفعال است"
         )
         raise HTTPException(status_code=403, detail="ثبت تردد با اثر انگشت غیرفعال است")
+    if payload.created_offline and not auth_methods.fingerprint_offline_enabled:
+        # همان پشتیبانِ سمت سرور برای دوربین: حتی اگر ماژول ESP32 هنوز رکورد
+        # آفلاینِ قدیمی در صف LittleFS داشته باشد، وقتی مدیر خاموشش کرده، اینجا
+        # هم رد می‌شود.
+        kiosk_status_service.record(
+            db, device, phase="error", message="حالت آفلاین اثر انگشت غیرفعال است"
+        )
+        raise HTTPException(status_code=403, detail="حالت آفلاین اثر انگشت غیرفعال است؛ تردد ثبت نشد")
 
     emp = fingerprint_service.resolve_employee(db, device.id, payload.slot_id)
     if emp is None:

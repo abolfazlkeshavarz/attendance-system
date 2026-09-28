@@ -75,6 +75,7 @@ bool load(DeviceConfig &cfg) {
   }
   cfg.cachedMinSeconds = prefs.getInt("minsec", 60);
   cfg.cachedFingerprintEnabled = prefs.getBool("fpen", true);
+  cfg.cachedOfflineEnabled = prefs.getBool("offen", true);
   prefs.end();
   return cfg.backendHost.length() > 0 && cfg.deviceKey.length() > 0 && cfg.ssid[0].length() > 0;
 }
@@ -100,6 +101,7 @@ void saveCachedSettings(const DeviceConfig &cfg) {
   prefs.begin(kNamespace, /*readOnly=*/false);
   prefs.putInt("minsec", cfg.cachedMinSeconds);
   prefs.putBool("fpen", cfg.cachedFingerprintEnabled);
+  prefs.putBool("offen", cfg.cachedOfflineEnabled);
   prefs.end();
 }
 

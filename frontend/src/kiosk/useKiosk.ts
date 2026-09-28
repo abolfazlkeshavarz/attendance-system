@@ -29,6 +29,9 @@ export interface KioskSettings {
   face_enabled: boolean
   fingerprint_enabled: boolean
   pin_enabled: boolean
+  // اگر خاموش باشد، هنگام قطعی اینترنت تردد در صف محلی ذخیره نمی‌شود — یعنی
+  // اصلاً ثبت نمی‌شود، نه این‌که بعداً همگام شود.
+  camera_offline_enabled: boolean
   // نوع دستگاهِ متصل به این کلید: «tablet» صفحهٔ دوربین، «fingerprint» صفحهٔ
   // اثر انگشت را نشان می‌دهد. از بخش device در پاسخ handshake خوانده می‌شود.
   device_kind: 'tablet' | 'fingerprint'
@@ -43,6 +46,7 @@ const FALLBACK_SETTINGS: KioskSettings = {
   face_enabled: true,
   fingerprint_enabled: false,
   pin_enabled: true,
+  camera_offline_enabled: true,
   device_kind: 'tablet',
 }
 
@@ -312,9 +316,11 @@ export function useSyncQueue(online: boolean) {
         })),
       })
       const results: { client_uuid: string; status: string }[] = res.data.results ?? []
-      // رکوردهای ثبت‌شده و تکراری از صف حذف می‌شوند؛ ردشده‌ها فقط شمارش می‌شوند
+      // رکوردهای ثبت‌شده/تکراری/dropped (یعنی حالت آفلاین خاموش شده و هرگز
+      // ثبت نخواهد شد) از صف حذف می‌شوند؛ فقط ردشده‌های واقعی می‌مانند تا
+      // دوباره تلاش شود.
       const settled = results
-        .filter((r) => r.status === 'created' || r.status === 'duplicate')
+        .filter((r) => r.status === 'created' || r.status === 'duplicate' || r.status === 'dropped')
         .map((r) => r.client_uuid)
       const rejected = results.filter((r) => r.status === 'rejected').map((r) => r.client_uuid)
       await removeMany(settled)
@@ -381,6 +387,8 @@ export async function submitPunch(params: {
   confidence?: number | null
   snapshot?: string | null
   forcedKind?: 'in' | 'out'
+  /** پیش‌فرض true — اگر مدیر حالت آفلاین را خاموش کرده باشد، false بدهید. */
+  offlineAllowed?: boolean
 }): Promise<PunchOutcome> {
   const clientUuid = newUuid()
   const happenedAt = new Date().toISOString()
@@ -410,7 +418,16 @@ export async function submitPunch(params: {
         offline: false,
       }
     } catch {
-      // به صف آفلاین برمی‌گردیم
+      // به صف آفلاین برمی‌گردیم — مگر این‌که مدیر آن را خاموش کرده باشد
+    }
+  }
+
+  if (params.offlineAllowed === false) {
+    return {
+      ok: false,
+      kind,
+      message: 'اتصال به سرور برقرار نیست و حالت آفلاین غیرفعال است؛ تردد ثبت نشد',
+      offline: true,
     }
   }
 

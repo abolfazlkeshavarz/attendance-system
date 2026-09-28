@@ -20,3 +20,10 @@ class SystemSettings(Base, TimestampMixin):
     face_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     fingerprint_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     pin_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # حالت آفلاین: وقتی خاموش باشد، دستگاه هنگام قطعی اینترنت دیگر تردد را در
+    # صف محلی ذخیره نمی‌کند — یعنی ترددهای بی‌اینترنت اصلاً ثبت نمی‌شوند، نه
+    # این‌که بعداً همگام شوند. برای کارخانه‌هایی که می‌خواهند فقط تردد
+    # آنلاین/تأییدشده را بپذیرند.
+    camera_offline_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    fingerprint_offline_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

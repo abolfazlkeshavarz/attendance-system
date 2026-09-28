@@ -276,6 +276,8 @@ export interface AuthMethods {
   face_enabled: boolean
   fingerprint_enabled: boolean
   pin_enabled: boolean
+  camera_offline_enabled: boolean
+  fingerprint_offline_enabled: boolean
 }
 
 export type FingerprintScanPhase =
