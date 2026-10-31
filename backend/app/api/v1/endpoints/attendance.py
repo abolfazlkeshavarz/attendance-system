@@ -11,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import AnyUser, DbSession, ManagerUser
 from app.core.jalali import (
     TEHRAN,
+    daterange,
+    iran_weekday,
     normalize_digits,
     parse_jalali,
     range_bounds_utc,
@@ -20,9 +22,12 @@ from app.core.jalali import (
 from app.models.attendance import AttendanceRecord
 from app.models.employee import Employee
 from app.models.enums import PunchKind, PunchMethod
+from app.models.organization import Holiday
 from app.schemas.attendance import (
     AttendanceOut,
     AttendanceUpdate,
+    BulkManualPunch,
+    BulkManualResult,
     ManualPunch,
     TodayStatus,
 )
@@ -158,6 +163,102 @@ def manual_punch(payload: ManualPunch, db: DbSession, user: ManagerUser) -> Atte
         .where(AttendanceRecord.id == result.record_id)
     ).scalar_one()
     return to_out(rec)
+
+
+@router.post(
+    "/manual-bulk",
+    response_model=BulkManualResult,
+    summary="ثبت دستی گروهی تردد در روزهای کاری یک بازه",
+)
+def manual_punch_bulk(
+    payload: BulkManualPunch, db: DbSession, user: ManagerUser
+) -> BulkManualResult:
+    if payload.kind not in (PunchKind.IN.value, PunchKind.OUT.value):
+        raise HTTPException(status_code=400, detail="نوع تردد باید ورود یا خروج باشد")
+    try:
+        start = parse_jalali(payload.from_jalali)
+        end = parse_jalali(payload.to_jalali)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if end < start:
+        raise HTTPException(status_code=400, detail="تاریخ پایان نمی‌تواند قبل از تاریخ شروع باشد")
+    if (end - start).days > 366:
+        raise HTTPException(status_code=400, detail="بازه نمی‌تواند بیشتر از یک سال باشد")
+    clock = parse_clock(payload.clock)
+
+    emps = (
+        db.execute(
+            select(Employee)
+            .options(selectinload(Employee.shift))
+            .where(Employee.id.in_(set(payload.employee_ids)))
+        )
+        .scalars()
+        .all()
+    )
+    if not emps:
+        raise HTTPException(status_code=404, detail="پرسنل یافت نشد")
+
+    holidays = set(
+        db.execute(select(Holiday.day).where(Holiday.day >= start, Holiday.day <= end)).scalars()
+    )
+    existing = {
+        (emp_id, work_date)
+        for emp_id, work_date in db.execute(
+            select(AttendanceRecord.employee_id, AttendanceRecord.work_date).where(
+                AttendanceRecord.employee_id.in_([e.id for e in emps]),
+                AttendanceRecord.kind == payload.kind,
+                AttendanceRecord.work_date >= start,
+                AttendanceRecord.work_date <= end,
+            )
+        ).all()
+    }
+
+    created = skipped_existing = skipped_non_workday = skipped_future = 0
+    days_touched: set[date] = set()
+    for emp in emps:
+        work_days = emp.shift.work_day_set if emp.shift is not None else set(range(6))
+        for day in daterange(start, end):
+            if (
+                day in holidays
+                or iran_weekday(day) not in work_days
+                or (emp.hire_date and day < emp.hire_date)
+            ):
+                skipped_non_workday += 1
+                continue
+            if day > today_tehran():
+                skipped_future += 1
+                continue
+            if (emp.id, day) in existing:
+                skipped_existing += 1
+                continue
+            happened_at = to_utc(datetime.combine(day, clock, tzinfo=TEHRAN))
+            try:
+                result = attendance_service.record_punch(
+                    db,
+                    employee=emp,
+                    kind=payload.kind,
+                    happened_at=happened_at,
+                    method=PunchMethod.MANUAL.value,
+                    note=payload.note,
+                    created_by_user_id=user.id,
+                    enforce_cooldown=False,
+                )
+            except attendance_service.PunchError:
+                skipped_future += 1
+                continue
+            if result.status == "created":
+                created += 1
+                days_touched.add(day)
+
+    db.commit()
+    return BulkManualResult(
+        created=created,
+        skipped_existing=skipped_existing,
+        skipped_non_workday=skipped_non_workday,
+        skipped_future=skipped_future,
+        employees=len(emps),
+        days=len(days_touched),
+    )
 
 
 @router.patch("/{record_id}", response_model=AttendanceOut, summary="اصلاح تردد")

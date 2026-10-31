@@ -101,6 +101,26 @@ class ManualPunch(BaseModel):
     note: str | None = None
 
 
+class BulkManualPunch(BaseModel):
+    """ثبت دستی گروهی: یک نوع تردد برای چند نفر در همه روزهای کاری یک بازه."""
+
+    employee_ids: list[int] = Field(min_length=1, max_length=500)
+    kind: str
+    from_jalali: str
+    to_jalali: str
+    clock: str = Field(description="ساعت به قالب HH:MM")
+    note: str | None = None
+
+
+class BulkManualResult(BaseModel):
+    created: int
+    skipped_existing: int
+    skipped_non_workday: int
+    skipped_future: int
+    employees: int
+    days: int
+
+
 class AttendanceUpdate(BaseModel):
     kind: str | None = None
     jalali_date: str | None = None

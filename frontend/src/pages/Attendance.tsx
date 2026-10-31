@@ -8,6 +8,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Users,
   Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -48,6 +49,7 @@ export default function Attendance() {
   const [page, setPage] = useState(1)
 
   const [manualOpen, setManualOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
   const [editRecord, setEditRecord] = useState<AttendanceRecord | null>(null)
   const [deleting, setDeleting] = useState<AttendanceRecord | null>(null)
 
@@ -116,10 +118,16 @@ export default function Attendance() {
                 خروجی اکسل
               </button>
               {editable && (
-                <button className="btn-primary" onClick={() => setManualOpen(true)}>
-                  <Plus size={16} />
-                  ثبت دستی
-                </button>
+                <>
+                  <button className="btn-ghost" onClick={() => setBulkOpen(true)}>
+                    <Users size={16} />
+                    ثبت گروهی
+                  </button>
+                  <button className="btn-primary" onClick={() => setManualOpen(true)}>
+                    <Plus size={16} />
+                    ثبت دستی
+                  </button>
+                </>
               )}
             </div>
           }
@@ -254,6 +262,12 @@ export default function Attendance() {
         employees={employees.data ?? []}
       />
 
+      <BulkPunchModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        employees={employees.data ?? []}
+      />
+
       <EditPunchModal record={editRecord} onClose={() => setEditRecord(null)} />
 
       <ConfirmDialog
@@ -359,6 +373,183 @@ function ManualPunchModal({
           <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
       </div>
+    </Modal>
+  )
+}
+
+// ------------------------------------------------------------------ ثبت گروهی
+
+interface BulkResult {
+  created: number
+  skipped_existing: number
+  skipped_non_workday: number
+  skipped_future: number
+  employees: number
+  days: number
+}
+
+function BulkPunchModal({
+  open,
+  onClose,
+  employees,
+}: {
+  open: boolean
+  onClose: () => void
+  employees: Employee[]
+}) {
+  const toast = useToast()
+  const qc = useQueryClient()
+  const [from, setFrom] = useState(toJalaliString())
+  const [to, setTo] = useState(toJalaliString())
+  const [kind, setKind] = useState<'in' | 'out'>('in')
+  const [clock, setClock] = useState('08:00')
+  const [note, setNote] = useState('')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [search, setSearch] = useState('')
+  const [result, setResult] = useState<BulkResult | null>(null)
+
+  const q = search.trim()
+  const visible = employees.filter(
+    (e) => !q || e.full_name.includes(q) || e.personnel_code.includes(q),
+  )
+  const allVisibleSelected = visible.length > 0 && visible.every((e) => selected.has(e.id))
+
+  function toggle(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const e of visible) {
+        if (allVisibleSelected) next.delete(e.id)
+        else next.add(e.id)
+      }
+      return next
+    })
+  }
+
+  const save = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post<BulkResult>('/attendance/manual-bulk', {
+          employee_ids: [...selected],
+          kind,
+          from_jalali: from,
+          to_jalali: to,
+          clock,
+          note: note || null,
+        })
+      ).data,
+    onSuccess: (data) => {
+      setResult(data)
+      toast.success(`${toPersianDigits(data.created)} تردد ثبت شد`)
+      void qc.invalidateQueries({ queryKey: ['attendance'] })
+      void qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  })
+
+  function close() {
+    setResult(null)
+    onClose()
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={close}
+      title="ثبت دستی گروهی"
+      footer={
+        <>
+          <button className="btn-ghost" onClick={close}>
+            بستن
+          </button>
+          <button
+            className="btn-primary"
+            onClick={() => {
+              setResult(null)
+              save.mutate()
+            }}
+            disabled={selected.size === 0 || !from || !to || save.isPending}
+          >
+            {save.isPending && <Spinner className="size-4" />}
+            ثبت {kind === 'in' ? 'ورود' : 'خروج'} برای {toPersianDigits(selected.size)} نفر
+          </button>
+        </>
+      }
+    >
+      <p className="mb-4 rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-6 text-amber-800">
+        برای هر نفرِ انتخاب‌شده، در همه روزهای کاری بازه (بدون جمعه/تعطیلات و روزهای غیرکاری شیفت)
+        یک تردد ثبت می‌شود. روزی که همان نوع تردد را از قبل دارد رد می‌شود. برای ثبت ورود و خروج،
+        یک‌بار با «ورود» و یک‌بار با «خروج» ثبت کنید.
+      </p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="از تاریخ" required>
+          <JalaliDatePicker value={from} onChange={setFrom} />
+        </Field>
+        <Field label="تا تاریخ" required>
+          <JalaliDatePicker value={to} onChange={setTo} />
+        </Field>
+        <Field label="نوع تردد" required>
+          <select className="input" value={kind} onChange={(e) => setKind(e.target.value as 'in' | 'out')}>
+            <option value="in">ورود</option>
+            <option value="out">خروج</option>
+          </select>
+        </Field>
+        <Field label="ساعت" required hint="قالب ۲۴ ساعته، مثلاً 08:15">
+          <input className="input" value={clock} onChange={(e) => setClock(e.target.value)} dir="ltr" />
+        </Field>
+        <Field label="توضیح" className="sm:col-span-2">
+          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
+        </Field>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-2 flex items-center gap-3">
+          <input
+            className="input"
+            placeholder="جستجوی نام یا کد پرسنلی"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-ink-600">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAll} />
+            انتخاب همه
+          </label>
+        </div>
+        <div className="max-h-56 overflow-y-auto rounded-xl border border-ink-100">
+          {visible.map((e) => (
+            <label
+              key={e.id}
+              className="flex cursor-pointer items-center gap-3 border-b border-ink-50 px-3 py-2 text-sm last:border-0 hover:bg-ink-50"
+            >
+              <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggle(e.id)} />
+              <span className="font-medium text-ink-800">{e.full_name}</span>
+              <span className="text-xs text-ink-400">{toPersianDigits(e.personnel_code)}</span>
+            </label>
+          ))}
+          {visible.length === 0 && <p className="p-4 text-center text-sm text-ink-400">موردی یافت نشد</p>}
+        </div>
+      </div>
+
+      {result && (
+        <div className="mt-4 rounded-xl bg-emerald-50 px-3.5 py-2.5 text-sm leading-7 text-emerald-800">
+          <p>
+            {toPersianDigits(result.created)} تردد برای {toPersianDigits(result.employees)} نفر ثبت شد.
+          </p>
+          <p className="text-xs">
+            رد شده: {toPersianDigits(result.skipped_existing)} مورد تکراری،{' '}
+            {toPersianDigits(result.skipped_non_workday)} روز غیرکاری،{' '}
+            {toPersianDigits(result.skipped_future)} روز آینده
+          </p>
+        </div>
+      )}
     </Modal>
   )
 }
